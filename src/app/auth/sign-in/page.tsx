@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useState, FormEvent, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from 'lib/supabase/client';
@@ -126,13 +127,13 @@ export default function SignIn() {
       {/* ── Left panel: form ──────────────────────────────────────────────── */}
       <div className="flex w-full flex-col bg-white px-8 py-10 dark:bg-navy-900 lg:w-1/2 xl:px-16">
         {/* Back to Dashboard */}
-        <a
+        <Link
           href="/"
           className="inline-flex items-center gap-1 text-sm font-medium text-gray-400 transition hover:text-navy-700 dark:text-gray-500 dark:hover:text-white"
         >
           <MdChevronLeft className="text-lg" />
           Back to Dashboard
-        </a>
+        </Link>
 
         {/* Vertically centre the form within the remaining space */}
         <div className="my-auto mx-auto w-full max-w-[420px] pt-10 pb-6">
@@ -230,12 +231,12 @@ export default function SignIn() {
                   Password<span className="ml-0.5 text-brand-500">*</span>
                 </label>
                 {mode === 'signin' && (
-                  <a
+                  <Link
                     href="/auth/forgot-password"
                     className="text-xs font-medium text-brand-500 hover:underline"
                   >
                     Forgot password?
-                  </a>
+                  </Link>
                 )}
               </div>
               <div className="relative">

@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useState, FormEvent } from 'react';
 import { createClient } from 'lib/supabase/client';
 import {
@@ -47,13 +48,13 @@ export default function ForgotPassword() {
     <div className="flex min-h-screen font-dm">
       {/* ── Left panel ────────────────────────────────────────────────────── */}
       <div className="flex w-full flex-col bg-white px-8 py-10 dark:bg-navy-900 lg:w-1/2 xl:px-16">
-        <a
+        <Link
           href="/auth/sign-in"
           className="inline-flex items-center gap-1 text-sm font-medium text-gray-400 transition hover:text-navy-700 dark:text-gray-500 dark:hover:text-white"
         >
           <MdChevronLeft className="text-lg" />
           Back to Sign In
-        </a>
+        </Link>
 
         <div className="my-auto mx-auto w-full max-w-[420px] pt-10 pb-6">
           <h1 className="text-[32px] font-bold leading-tight text-navy-900 dark:text-white">

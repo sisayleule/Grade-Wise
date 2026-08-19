@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useState, FormEvent, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from 'lib/supabase/client';
@@ -94,13 +95,13 @@ export default function ResetPassword() {
     <div className="flex min-h-screen font-dm">
       {/* ── Left panel ────────────────────────────────────────────────────── */}
       <div className="flex w-full flex-col bg-white px-8 py-10 dark:bg-navy-900 lg:w-1/2 xl:px-16">
-        <a
+        <Link
           href="/auth/sign-in"
           className="inline-flex items-center gap-1 text-sm font-medium text-gray-400 transition hover:text-navy-700 dark:text-gray-500 dark:hover:text-white"
         >
           <MdChevronLeft className="text-lg" />
           Back to Sign In
-        </a>
+        </Link>
 
         <div className="my-auto mx-auto w-full max-w-[420px] pt-10 pb-6">
 
@@ -127,12 +128,12 @@ export default function ResetPassword() {
                 <div>
                   <p className="font-bold">Request a new link</p>
                   <p className="mt-1">
-                    <a
+                    <Link
                       href="/auth/forgot-password"
                       className="font-bold text-brand-500 underline hover:no-underline"
                     >
                       Click here
-                    </a>{' '}
+                    </Link>{' '}
                     to request a fresh password reset link.
                   </p>
                 </div>
