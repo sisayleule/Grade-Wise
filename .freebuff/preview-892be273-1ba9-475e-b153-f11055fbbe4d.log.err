@@ -1,0 +1,257 @@
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown project config "strict-peer-dependencies". This will stop working in the next major version of npm.
+ ⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of C:\Users\HP\package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * C:\Users\HP\Desktop\SGMS\package-lock.json
+
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\5.pack.gz_' -> 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\5.pack.gz'
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz_' -> 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz_' -> 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz_' -> 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz_' -> 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\1.pack.gz_' -> 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\1.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz_' -> 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\1.pack.gz_' -> 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\1.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz_' -> 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz_' -> 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz'
+ ⨯ ./src/lib/extract.ts
+Error:   [31mx[0m Expected ';', '}' or <eof>
+     ,-[[36;1;4mC:\Users\HP\Desktop\SGMS\src\lib\extract.ts[0m:557:1]
+ [2m554[0m |       const words = name.split(/\s+/).filter(Boolean);
+ [2m555[0m |       // Each word in a multi-word name must be at least 3 chars; single-word
+ [2m556[0m |       // names at least 4 chars. This rejects garbled OCR fragments like "EE",
+ [2m557[0m | [35;1m,[0m[35;1m-[0m[35;1m>[0m   "fw", "rar", "fot".
+ [2m558[0m | [35;1m|[0m[35;1m-[0m[35;1m>[0m   const wordsLongEnough =
+     : [35;1m`[0m[35;1m---[0m[33;1m        ^^^^^^^^^^^^^^^[0m
+     : [35;1m`[0m[35;1m---[0m[35;1m-[0m [35;1mThis is the expression part of an expression statement[0m
+ [2m559[0m |         words.length >= 2 ? words.every((w) => w.length >= 3) : name.length >= 4;
+ [2m560[0m |       const nameOk =
+ [2m561[0m |         letters >= 3 &&
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/lib/extract.ts
+./src/app/page.tsx
+ ⨯ ./src/lib/extract.ts
+Error:   [31mx[0m Expected ';', '}' or <eof>
+     ,-[[36;1;4mC:\Users\HP\Desktop\SGMS\src\lib\extract.ts[0m:557:1]
+ [2m554[0m |       const words = name.split(/\s+/).filter(Boolean);
+ [2m555[0m |       // Each word in a multi-word name must be at least 3 chars; single-word
+ [2m556[0m |       // names at least 4 chars. This rejects garbled OCR fragments like "EE",
+ [2m557[0m | [35;1m,[0m[35;1m-[0m[35;1m>[0m   "fw", "rar", "fot".
+ [2m558[0m | [35;1m|[0m[35;1m-[0m[35;1m>[0m   const wordsLongEnough =
+     : [35;1m`[0m[35;1m---[0m[33;1m        ^^^^^^^^^^^^^^^[0m
+     : [35;1m`[0m[35;1m---[0m[35;1m-[0m [35;1mThis is the expression part of an expression statement[0m
+ [2m559[0m |         words.length >= 2 ? words.every((w) => w.length >= 3) : name.length >= 4;
+ [2m560[0m |       const nameOk =
+ [2m561[0m |         letters >= 3 &&
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/lib/extract.ts
+./src/app/page.tsx
+ ⨯ ./src/lib/extract.ts
+Error:   [31mx[0m Expected ';', '}' or <eof>
+     ,-[[36;1;4mC:\Users\HP\Desktop\SGMS\src\lib\extract.ts[0m:557:1]
+ [2m554[0m |       const words = name.split(/\s+/).filter(Boolean);
+ [2m555[0m |       // Each word in a multi-word name must be at least 3 chars; single-word
+ [2m556[0m |       // names at least 4 chars. This rejects garbled OCR fragments like "EE",
+ [2m557[0m | [35;1m,[0m[35;1m-[0m[35;1m>[0m   "fw", "rar", "fot".
+ [2m558[0m | [35;1m|[0m[35;1m-[0m[35;1m>[0m   const wordsLongEnough =
+     : [35;1m`[0m[35;1m---[0m[33;1m        ^^^^^^^^^^^^^^^[0m
+     : [35;1m`[0m[35;1m---[0m[35;1m-[0m [35;1mThis is the expression part of an expression statement[0m
+ [2m559[0m |         words.length >= 2 ? words.every((w) => w.length >= 3) : name.length >= 4;
+ [2m560[0m |       const nameOk =
+ [2m561[0m |         letters >= 3 &&
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/lib/extract.ts
+./src/app/page.tsx
+ ⨯ ./src/lib/extract.ts
+Error:   [31mx[0m Expected ';', '}' or <eof>
+     ,-[[36;1;4mC:\Users\HP\Desktop\SGMS\src\lib\extract.ts[0m:557:1]
+ [2m554[0m |       const words = name.split(/\s+/).filter(Boolean);
+ [2m555[0m |       // Each word in a multi-word name must be at least 3 chars; single-word
+ [2m556[0m |       // names at least 4 chars. This rejects garbled OCR fragments like "EE",
+ [2m557[0m | [35;1m,[0m[35;1m-[0m[35;1m>[0m   "fw", "rar", "fot".
+ [2m558[0m | [35;1m|[0m[35;1m-[0m[35;1m>[0m   const wordsLongEnough =
+     : [35;1m`[0m[35;1m---[0m[33;1m        ^^^^^^^^^^^^^^^[0m
+     : [35;1m`[0m[35;1m---[0m[35;1m-[0m [35;1mThis is the expression part of an expression statement[0m
+ [2m559[0m |         words.length >= 2 ? words.every((w) => w.length >= 3) : name.length >= 4;
+ [2m560[0m |       const nameOk =
+ [2m561[0m |         letters >= 3 &&
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/lib/extract.ts
+./src/app/page.tsx
+ ⨯ ./src/lib/extract.ts
+Error:   [31mx[0m Expected ';', '}' or <eof>
+     ,-[[36;1;4mC:\Users\HP\Desktop\SGMS\src\lib\extract.ts[0m:557:1]
+ [2m554[0m |       const words = name.split(/\s+/).filter(Boolean);
+ [2m555[0m |       // Each word in a multi-word name must be at least 3 chars; single-word
+ [2m556[0m |       // names at least 4 chars. This rejects garbled OCR fragments like "EE",
+ [2m557[0m | [35;1m,[0m[35;1m-[0m[35;1m>[0m   "fw", "rar", "fot".
+ [2m558[0m | [35;1m|[0m[35;1m-[0m[35;1m>[0m   const wordsLongEnough =
+     : [35;1m`[0m[35;1m---[0m[33;1m        ^^^^^^^^^^^^^^^[0m
+     : [35;1m`[0m[35;1m---[0m[35;1m-[0m [35;1mThis is the expression part of an expression statement[0m
+ [2m559[0m |         words.length >= 2 ? words.every((w) => w.length >= 3) : name.length >= 4;
+ [2m560[0m |       const nameOk =
+ [2m561[0m |         letters >= 3 &&
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/lib/extract.ts
+./src/app/page.tsx
+ ⨯ ./src/lib/extract.ts
+Error:   [31mx[0m Expected ';', '}' or <eof>
+     ,-[[36;1;4mC:\Users\HP\Desktop\SGMS\src\lib\extract.ts[0m:560:1]
+ [2m557[0m |       const words = name.split(/\s+/).filter(Boolean);
+ [2m558[0m |       // Each word in a multi-word name must be at least 3 chars; single-word
+ [2m559[0m |       // names at least 4 chars. This rejects garbled OCR fragments like "EE",
+ [2m560[0m | [35;1m,[0m[35;1m-[0m[35;1m>[0m   "fw", "rar", "fot".
+ [2m561[0m | [35;1m|[0m[35;1m-[0m[35;1m>[0m   const wordsLongEnough =
+     : [35;1m`[0m[35;1m---[0m[33;1m        ^^^^^^^^^^^^^^^[0m
+     : [35;1m`[0m[35;1m---[0m[35;1m-[0m [35;1mThis is the expression part of an expression statement[0m
+ [2m562[0m |         words.length >= 2 ? words.every((w) => w.length >= 3) : name.length >= 4;
+ [2m563[0m |       const nameOk =
+ [2m564[0m |         letters >= 3 &&
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/lib/extract.ts
+./src/app/page.tsx
+ ⨯ ./src/lib/extract.ts
+Error:   [31mx[0m Expected ';', '}' or <eof>
+     ,-[[36;1;4mC:\Users\HP\Desktop\SGMS\src\lib\extract.ts[0m:560:1]
+ [2m557[0m |       const words = name.split(/\s+/).filter(Boolean);
+ [2m558[0m |       // Each word in a multi-word name must be at least 3 chars; single-word
+ [2m559[0m |       // names at least 4 chars. This rejects garbled OCR fragments like "EE",
+ [2m560[0m | [35;1m,[0m[35;1m-[0m[35;1m>[0m   "fw", "rar", "fot".
+ [2m561[0m | [35;1m|[0m[35;1m-[0m[35;1m>[0m   const wordsLongEnough =
+     : [35;1m`[0m[35;1m---[0m[33;1m        ^^^^^^^^^^^^^^^[0m
+     : [35;1m`[0m[35;1m---[0m[35;1m-[0m [35;1mThis is the expression part of an expression statement[0m
+ [2m562[0m |         words.length >= 2 ? words.every((w) => w.length >= 3) : name.length >= 4;
+ [2m563[0m |       const nameOk =
+ [2m564[0m |         letters >= 3 &&
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/lib/extract.ts
+./src/app/page.tsx
+ ⨯ ./src/lib/extract.ts
+Error:   [31mx[0m Expected ';', '}' or <eof>
+     ,-[[36;1;4mC:\Users\HP\Desktop\SGMS\src\lib\extract.ts[0m:560:1]
+ [2m557[0m |       const words = name.split(/\s+/).filter(Boolean);
+ [2m558[0m |       // Each word in a multi-word name must be at least 3 chars; single-word
+ [2m559[0m |       // names at least 4 chars. This rejects garbled OCR fragments like "EE",
+ [2m560[0m | [35;1m,[0m[35;1m-[0m[35;1m>[0m   "fw", "rar", "fot".
+ [2m561[0m | [35;1m|[0m[35;1m-[0m[35;1m>[0m   const wordsLongEnough =
+     : [35;1m`[0m[35;1m---[0m[33;1m        ^^^^^^^^^^^^^^^[0m
+     : [35;1m`[0m[35;1m---[0m[35;1m-[0m [35;1mThis is the expression part of an expression statement[0m
+ [2m562[0m |         words.length >= 2 ? words.every((w) => w.length >= 3) : name.length >= 4;
+ [2m563[0m |       const nameOk =
+ [2m564[0m |         letters >= 3 &&
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/lib/extract.ts
+./src/app/page.tsx
+ ⨯ ./src/lib/extract.ts
+Error:   [31mx[0m Expected ';', '}' or <eof>
+     ,-[[36;1;4mC:\Users\HP\Desktop\SGMS\src\lib\extract.ts[0m:560:1]
+ [2m557[0m |       const words = name.split(/\s+/).filter(Boolean);
+ [2m558[0m |       // Each word in a multi-word name must be at least 3 chars; single-word
+ [2m559[0m |       // names at least 4 chars. This rejects garbled OCR fragments like "EE",
+ [2m560[0m | [35;1m,[0m[35;1m-[0m[35;1m>[0m   "fw", "rar", "fot".
+ [2m561[0m | [35;1m|[0m[35;1m-[0m[35;1m>[0m   const wordsLongEnough =
+     : [35;1m`[0m[35;1m---[0m[33;1m        ^^^^^^^^^^^^^^^[0m
+     : [35;1m`[0m[35;1m---[0m[35;1m-[0m [35;1mThis is the expression part of an expression statement[0m
+ [2m562[0m |         words.length >= 2 ? words.every((w) => w.length >= 3) : name.length >= 4;
+ [2m563[0m |       const nameOk =
+ [2m564[0m |         letters >= 3 &&
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/lib/extract.ts
+./src/app/page.tsx
+ ⨯ ./src/lib/extract.ts
+Error:   [31mx[0m Expected ';', '}' or <eof>
+     ,-[[36;1;4mC:\Users\HP\Desktop\SGMS\src\lib\extract.ts[0m:586:1]
+ [2m583[0m |       const words = name.split(/\s+/).filter(Boolean);
+ [2m584[0m |       // Each word in a multi-word name must be at least 3 chars; single-word
+ [2m585[0m |       // names at least 4 chars. This rejects garbled OCR fragments like "EE",
+ [2m586[0m | [35;1m,[0m[35;1m-[0m[35;1m>[0m   "fw", "rar", "fot".
+ [2m587[0m | [35;1m|[0m[35;1m-[0m[35;1m>[0m   const wordsLongEnough =
+     : [35;1m`[0m[35;1m---[0m[33;1m        ^^^^^^^^^^^^^^^[0m
+     : [35;1m`[0m[35;1m---[0m[35;1m-[0m [35;1mThis is the expression part of an expression statement[0m
+ [2m588[0m |         words.length >= 2 ? words.every((w) => w.length >= 3) : name.length >= 4;
+ [2m589[0m |       const nameOk =
+ [2m590[0m |         letters >= 3 &&
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/lib/extract.ts
+./src/app/page.tsx
+ ⨯ ./src/lib/extract.ts
+Error:   [31mx[0m Expected ';', '}' or <eof>
+     ,-[[36;1;4mC:\Users\HP\Desktop\SGMS\src\lib\extract.ts[0m:595:1]
+ [2m592[0m |       const words = name.split(/\s+/).filter(Boolean);
+ [2m593[0m |       // Each word in a multi-word name must be at least 3 chars; single-word
+ [2m594[0m |       // names at least 4 chars. This rejects garbled OCR fragments like "EE",
+ [2m595[0m | [35;1m,[0m[35;1m-[0m[35;1m>[0m   "fw", "rar", "fot".
+ [2m596[0m | [35;1m|[0m[35;1m-[0m[35;1m>[0m   const wordsLongEnough =
+     : [35;1m`[0m[35;1m---[0m[33;1m        ^^^^^^^^^^^^^^^[0m
+     : [35;1m`[0m[35;1m---[0m[35;1m-[0m [35;1mThis is the expression part of an expression statement[0m
+ [2m597[0m |         words.length >= 2 ? words.every((w) => w.length >= 3) : name.length >= 4;
+ [2m598[0m |       const nameOk =
+ [2m599[0m |         letters >= 3 &&
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/lib/extract.ts
+./src/app/page.tsx
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz_' -> 'C:\Users\HP\Desktop\SGMS\.next\cache\webpack\client-development\0.pack.gz'
