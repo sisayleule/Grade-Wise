@@ -1,5 +1,5 @@
 export type ScoreRow = { id: string; name: string; scores: Record<string, string | number>; uncertain?: string[] };
-export type Result = ScoreRow & { total: number; maximum: number; average: number; percentage: number; rank: number; status: string };
+export type Result = ScoreRow & { total: number; maximum: number; average: number; percentage: number; rank: number; status: string; letterGrade: string };
 export type Batch = { id: string; year: string; className: string; semester: string; subjects: string[]; rows: Result[]; createdAt: string; fileName?: string; grade?: string; section?: string };
 export type School = { name: string; teacher: string; principal: string; footer: string; logo?: string };
 
@@ -8,12 +8,34 @@ export const initialRows: ScoreRow[] = [];
 
 export const statusFor = (percentage: number) => percentage >= 80 ? 'Excellent' : percentage >= 70 ? 'Very Good' : percentage >= 60 ? 'Good' : percentage >= 50 ? 'Satisfactory' : 'Needs Support';
 
+/**
+ * Returns the letter grade for a given score (0–100).
+ * This is the single source of truth for the grading scale used everywhere
+ * in the app — UI pages, printable reports, and DOCX documents.
+ *
+ * Scale:
+ *   90–100 → A+   80–89 → A    75–79 → B+   70–74 → B
+ *   65–69  → C+   60–64 → C    55–59 → D+   50–54 → D
+ *   < 50   → E
+ */
+export function getLetterGrade(score: number): string {
+  if (score >= 90) return 'A+';
+  if (score >= 80) return 'A';
+  if (score >= 75) return 'B+';
+  if (score >= 70) return 'B';
+  if (score >= 65) return 'C+';
+  if (score >= 60) return 'C';
+  if (score >= 55) return 'D+';
+  if (score >= 50) return 'D';
+  return 'E';
+}
+
 export function computeResults(rows: ScoreRow[], subjects: string[]): Result[] {
   const calculated = rows.map((row) => {
     const total = subjects.reduce((sum, subject) => sum + Number(row.scores[subject]), 0);
     const maximum = subjects.length * 100;
     const percentage = maximum ? (total / maximum) * 100 : 0;
-    return { ...row, total, maximum, average: subjects.length ? total / subjects.length : 0, percentage, rank: 0, status: statusFor(percentage) };
+    return { ...row, total, maximum, average: subjects.length ? total / subjects.length : 0, percentage, rank: 0, status: statusFor(percentage), letterGrade: getLetterGrade(percentage) };
   }).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
   let lastTotal = -1; let rank = 0;
   return calculated.map((row, index) => { if (row.total !== lastTotal) rank = index + 1; lastTotal = row.total; return { ...row, rank }; });

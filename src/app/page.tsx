@@ -9,6 +9,7 @@ import {
   Batch,
   buildAnnual,
   computeResults,
+  getLetterGrade,
   initialRows,
   Result,
   School,
@@ -1220,7 +1221,7 @@ function Dashboard({
                       </p>
                     </div>
                     <p className="text-xs text-gray-600 dark:text-gray-400">
-                      Average {r.average.toFixed(1)} · {r.status}
+                      Average {r.average.toFixed(1)} · {r.status} · <span className="font-bold text-navy-900 dark:text-white">{r.letterGrade}</span>
                     </p>
                     <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-navy-700">
                       <div
@@ -1613,11 +1614,8 @@ function Students({ rows, total, className, query, onReport }: any) {
                   { label: 'Total', value: `${r.total}/${r.maximum}` },
                   { label: 'Average', value: r.average.toFixed(1) },
                   { label: 'Percentage', value: `${r.percentage.toFixed(1)}%` },
-                  {
-                    label: 'Status',
-                    value: r.status,
-                    chip: true,
-                  },
+                  { label: 'Grade', value: r.letterGrade, chip: true },
+                  { label: 'Status', value: r.status, chip: true },
                 ].map((s) => (
                   <div
                     key={s.label}
@@ -1955,6 +1953,7 @@ function Rankings({
               <th className="p-3.5 font-bold">Total</th>
               <th className="p-3.5 font-bold">Average</th>
               <th className="p-3.5 font-bold">Percentage</th>
+              <th className="p-3.5 font-bold">Grade</th>
               <th className="p-3.5" />
             </tr>
           </thead>
@@ -1999,6 +1998,11 @@ function Rankings({
                     {r.status}
                   </span>
                 </td>
+                <td className="p-3.5">
+                  <span className="inline-block rounded-full bg-navy-900 px-2.5 py-1 text-xs font-bold text-white dark:bg-brand-500">
+                    {r.letterGrade}
+                  </span>
+                </td>
                 <td className="p-3.5 text-right">
                   <button
                     onClick={() => onReport(r)}
@@ -2034,7 +2038,7 @@ function Rankings({
               </div>
               <RankBadge rank={r.rank} />
             </div>
-            <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+            <div className="mt-4 grid grid-cols-4 gap-2 text-sm">
               <div className="rounded-xl bg-lightPrimary px-3 py-2 dark:bg-navy-700/60">
                 {r.total}/{r.maximum}
                 <small className="block text-[10px] uppercase text-gray-500 dark:text-gray-400">
@@ -2051,6 +2055,12 @@ function Rankings({
                 <b>{r.percentage.toFixed(1)}%</b>
                 <small className="block text-[10px] uppercase text-gray-500 dark:text-gray-400">
                   {r.status}
+                </small>
+              </div>
+              <div className="rounded-xl bg-navy-900 px-3 py-2 text-white dark:bg-brand-500">
+                <b>{r.letterGrade}</b>
+                <small className="block text-[10px] uppercase text-white/60">
+                  Grade
                 </small>
               </div>
             </div>

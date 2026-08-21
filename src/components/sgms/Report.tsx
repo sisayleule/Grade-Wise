@@ -1,5 +1,5 @@
 'use client';
-import { Result, School } from 'lib/grades';
+import { Result, School, getLetterGrade } from 'lib/grades';
 export default function Report({
   student,
   subjects,
@@ -66,6 +66,7 @@ export default function Report({
           <tr className="bg-navy-900 text-left text-white">
             <th className="p-3 font-bold">Subject</th>
             <th className="p-3 text-right font-bold">Score</th>
+            <th className="p-3 text-right font-bold">Grade</th>
             <th className="p-3 text-right font-bold">Maximum</th>
           </tr>
         </thead>
@@ -76,15 +77,19 @@ export default function Report({
               <td className="p-3 text-right font-bold text-navy-900">
                 {student.scores[s]}
               </td>
+              <td className="p-3 text-right font-bold text-brand-600">
+                {getLetterGrade(Number(student.scores[s]))}
+              </td>
               <td className="p-3 text-right">100</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div className="mt-6 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+      <div className="mt-6 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
         <Stat label="Total" value={`${student.total}/${student.maximum}`} />
         <Stat label="Average" value={student.average.toFixed(1)} />
         <Stat label="Percentage" value={`${student.percentage.toFixed(1)}%`} />
+        <Stat label="Grade" value={student.letterGrade} highlight />
         <Stat label="Remark" value={student.status} />
       </div>
       <footer className="mt-14 grid grid-cols-2 gap-10 text-center text-sm">
@@ -105,11 +110,11 @@ export default function Report({
     </article>
   );
 }
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className="rounded-xl bg-brand-50 p-3">
-      <p className="text-xs uppercase tracking-wide text-gray-600">{label}</p>
-      <p className="mt-1 font-bold text-navy-900">{value}</p>
+    <div className={`rounded-xl p-3 ${highlight ? 'bg-navy-900' : 'bg-brand-50'}`}>
+      <p className={`text-xs uppercase tracking-wide ${highlight ? 'text-white/60' : 'text-gray-600'}`}>{label}</p>
+      <p className={`mt-1 font-bold ${highlight ? 'text-white text-lg' : 'text-navy-900'}`}>{value}</p>
     </div>
   );
 }

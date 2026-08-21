@@ -29,6 +29,7 @@ import {
   VerticalAlign,
 } from 'docx';
 import type { Result, School } from 'lib/grades';
+import { getLetterGrade } from 'lib/grades';
 
 // ── Shared style constants ────────────────────────────────────────────────────
 
@@ -262,20 +263,23 @@ export async function generateStudentReportDoc(input: StudentReportInput): Promi
       const s1 = String(s1Scores[subj] ?? '—');
       const s2 = String(s2Scores[subj] ?? '—');
       const avg = student.scores[subj];
+      const avgNum = avg !== undefined && avg !== '' ? Number(avg) : NaN;
       return new TableRow({
         children: [
-          dataCell(subj,  30, { shaded: shade }),
-          dataCell(s1,    17, { center: true, shaded: shade }),
-          dataCell(s2,    17, { center: true, shaded: shade }),
-          dataCell(avg !== undefined && avg !== '' ? String(avg) : '—', 17, { center: true, bold: true, shaded: shade }),
-          dataCell('100', 19, { center: true, shaded: shade }),
+          dataCell(subj,  27, { shaded: shade }),
+          dataCell(s1,    15, { center: true, shaded: shade }),
+          dataCell(s2,    15, { center: true, shaded: shade }),
+          dataCell(avgNum !== undefined && !isNaN(avgNum) ? String(avg) : '—', 15, { center: true, bold: true, shaded: shade }),
+          dataCell(!isNaN(avgNum) ? getLetterGrade(avgNum) : '—', 13, { center: true, bold: true, shaded: shade }),
+          dataCell('100', 15, { center: true, shaded: shade }),
         ],
       });
     }
     return new TableRow({
       children: [
-        dataCell(subj,                   50, { shaded: shade }),
-        dataCell(String(student.scores[subj] ?? '—'), 25, { center: true, bold: true, shaded: shade }),
+        dataCell(subj,                   40, { shaded: shade }),
+        dataCell(String(student.scores[subj] ?? '—'), 20, { center: true, bold: true, shaded: shade }),
+        dataCell(getLetterGrade(Number(student.scores[subj])), 15, { center: true, bold: true, shaded: shade }),
         dataCell('100',                  25, { center: true, shaded: shade }),
       ],
     });
@@ -288,15 +292,17 @@ export async function generateStudentReportDoc(input: StudentReportInput): Promi
         tableHeader: true,
         children: isFullYear && s1Scores && s2Scores
           ? [
-              headerCell('Subject',     30),
-              headerCell('Semester 1',  17),
-              headerCell('Semester 2',  17),
-              headerCell('Final Score', 17),
-              headerCell('Maximum',     19),
+              headerCell('Subject',     27),
+              headerCell('Semester 1',  15),
+              headerCell('Semester 2',  15),
+              headerCell('Final Score', 15),
+              headerCell('Grade',       13),
+              headerCell('Maximum',     15),
             ]
           : [
-              headerCell('Subject', 50),
-              headerCell('Score',   25),
+              headerCell('Subject', 40),
+              headerCell('Score',   20),
+              headerCell('Grade',   15),
               headerCell('Maximum', 25),
             ],
       }),
@@ -311,18 +317,20 @@ export async function generateStudentReportDoc(input: StudentReportInput): Promi
       new TableRow({
         tableHeader: true,
         children: [
-          headerCell('Total',      25),
-          headerCell('Average',    25),
-          headerCell('Percentage', 25),
-          headerCell('Remark',     25),
+          headerCell('Total',      20),
+          headerCell('Average',    20),
+          headerCell('Percentage', 20),
+          headerCell('Grade',      20),
+          headerCell('Remark',     20),
         ],
       }),
       new TableRow({
         children: [
-          dataCell(`${student.total}/${student.maximum}`, 25, { center: true, bold: true }),
-          dataCell(student.average.toFixed(1),             25, { center: true }),
-          dataCell(`${student.percentage.toFixed(1)}%`,   25, { center: true }),
-          dataCell(student.status,                         25, { center: true, bold: true }),
+          dataCell(`${student.total}/${student.maximum}`, 20, { center: true, bold: true }),
+          dataCell(student.average.toFixed(1),             20, { center: true }),
+          dataCell(`${student.percentage.toFixed(1)}%`,   20, { center: true }),
+          dataCell(student.letterGrade,                    20, { center: true, bold: true }),
+          dataCell(student.status,                         20, { center: true, bold: true }),
         ],
       }),
     ],
@@ -392,8 +400,9 @@ export async function generateClassReportDoc(input: ClassReportInput): Promise<v
       ...subjects.map(() => headerCell('', subjectWidth)),
       headerCell('Total',   7),
       headerCell('Avg',     6),
-      headerCell('%',       6),
-      headerCell('Remark',  8),
+      headerCell('%',       5),
+      headerCell('Grade',   6),
+      headerCell('Remark',  7),
     ],
   });
 
@@ -407,8 +416,9 @@ export async function generateClassReportDoc(input: ClassReportInput): Promise<v
       ...subjects.map(s => dataCell(s, subjectWidth, { shaded: true, center: true })),
       dataCell('',    7,  { shaded: true }),
       dataCell('',    6,  { shaded: true }),
+      dataCell('',    5,  { shaded: true }),
       dataCell('',    6,  { shaded: true }),
-      dataCell('',    8,  { shaded: true }),
+      dataCell('',    7,  { shaded: true }),
     ],
   });
 
@@ -425,8 +435,9 @@ export async function generateClassReportDoc(input: ClassReportInput): Promise<v
         )),
         dataCell(`${r.total}/${r.maximum}`,         7,  { center: true, shaded: idx % 2 === 0 }),
         dataCell(r.average.toFixed(1),              6,  { center: true, shaded: idx % 2 === 0 }),
-        dataCell(`${r.percentage.toFixed(1)}%`,     6,  { center: true, shaded: idx % 2 === 0 }),
-        dataCell(r.status,                          8,  { center: true, shaded: idx % 2 === 0 }),
+        dataCell(`${r.percentage.toFixed(1)}%`,     5,  { center: true, shaded: idx % 2 === 0 }),
+        dataCell(r.letterGrade,                     6,  { center: true, bold: true, shaded: idx % 2 === 0 }),
+        dataCell(r.status,                          7,  { center: true, shaded: idx % 2 === 0 }),
       ],
     })
   );
@@ -488,12 +499,13 @@ export async function generateRankingDoc(input: RankingDocInput): Promise<void> 
       children: [
         dataCell(String(r.rank),                  8,  { center: true, bold: r.rank <= 3, shaded: r.rank <= 3 }),
         dataCell(r.id,                            10, { shaded: idx % 2 === 0 }),
-        dataCell(r.name,                          32, { bold: true, shaded: idx % 2 === 0 }),
+        dataCell(r.name,                          27, { bold: true, shaded: idx % 2 === 0 }),
         ...(mode === 'grade' ? [dataCell(`${grade}${(r as any).section || section}`, 10, { center: true, shaded: idx % 2 === 0 })] : []),
-        dataCell(`${r.total}/${r.maximum}`,       15, { center: true, shaded: idx % 2 === 0 }),
-        dataCell(r.average.toFixed(1),            10, { center: true, shaded: idx % 2 === 0 }),
-        dataCell(`${r.percentage.toFixed(1)}%`,   10, { center: true, shaded: idx % 2 === 0 }),
-        dataCell(r.status,                        15, { center: true, shaded: idx % 2 === 0 }),
+        dataCell(`${r.total}/${r.maximum}`,       13, { center: true, shaded: idx % 2 === 0 }),
+        dataCell(r.average.toFixed(1),            9,  { center: true, shaded: idx % 2 === 0 }),
+        dataCell(`${r.percentage.toFixed(1)}%`,   9,  { center: true, shaded: idx % 2 === 0 }),
+        dataCell(r.letterGrade,                   8,  { center: true, bold: true, shaded: idx % 2 === 0 }),
+        dataCell(r.status,                        16, { center: true, shaded: idx % 2 === 0 }),
       ],
     })
   );
@@ -506,12 +518,13 @@ export async function generateRankingDoc(input: RankingDocInput): Promise<void> 
         children: [
           headerCell('Rank',  8),
           headerCell('ID',   10),
-          headerCell('Student Name', 32),
+          headerCell('Student Name', 27),
           ...(mode === 'grade' ? [headerCell('Class', 10)] : []),
-          headerCell('Total', 15),
-          headerCell('Avg',   10),
-          headerCell('%',     10),
-          headerCell('Remark', 15),
+          headerCell('Total', 13),
+          headerCell('Avg',    9),
+          headerCell('%',      9),
+          headerCell('Grade',  8),
+          headerCell('Remark', 16),
         ],
       }),
       ...rankRows,
@@ -594,7 +607,8 @@ export async function generateFinalResultDoc(input: FinalResultInput): Promise<v
       headerCell('Total', 6),
       headerCell('Avg',   5),
       headerCell('%',     5),
-      headerCell('Remark', 7),
+      headerCell('Grade', 5),
+      headerCell('Remark', 6),
     ],
   });
 
@@ -617,7 +631,8 @@ export async function generateFinalResultDoc(input: FinalResultInput): Promise<v
         dataCell(`${r.total}/${r.maximum}`,    6, { center: true, shaded: shade }),
         dataCell(r.average.toFixed(1),         5, { center: true, shaded: shade }),
         dataCell(`${r.percentage.toFixed(1)}%`, 5, { center: true, shaded: shade }),
-        dataCell(r.status,                     7, { center: true, shaded: shade }),
+        dataCell(r.letterGrade,                5, { center: true, bold: true, shaded: shade }),
+        dataCell(r.status,                     6, { center: true, shaded: shade }),
       ],
     });
   });
