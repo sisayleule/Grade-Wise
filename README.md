@@ -1,4 +1,5 @@
-# Horizon UI - Free Tailwind CSS & Next.js Admin Dashboard Template
+# Grade-Wise
+A school academic management platform that helps schools manage students, grades, academic records, and generate reports.
 #### Preview
 
  - [Demo](https://themewagon.github.io/horizon-next/)
@@ -28,9 +29,6 @@ pnpm dev
 bun dev
 ```
 
-## Author 
-```
-Design and code is completely written by Horizon UI and development team. 
 ```
 
 ## License
