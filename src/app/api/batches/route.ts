@@ -86,8 +86,9 @@ export async function POST(request: NextRequest) {
   if (!year || !grade || !section || !semester || !subjects?.length || !rows?.length) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
-  if (!['Semester 1', 'Semester 2'].includes(semester)) {
-    return NextResponse.json({ error: 'semester must be "Semester 1" or "Semester 2"' }, { status: 400 });
+  const VALID_PERIODS = ['Semester 1', 'Semester 2', 'Quarter 1', 'Quarter 2', 'Quarter 3', 'Quarter 4'];
+  if (!VALID_PERIODS.includes(semester)) {
+    return NextResponse.json({ error: `semester must be one of: ${VALID_PERIODS.join(', ')}` }, { status: 400 });
   }
 
   // ── Duplicate check ──────────────────────────────────────────────────────

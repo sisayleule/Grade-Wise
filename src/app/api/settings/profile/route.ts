@@ -16,7 +16,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from('schools')
-    .select('name, teacher, principal, logo, footer')
+    .select('name, teacher, principal, logo, footer, period_system')
     .eq('id', user.id)
     .single();
 
@@ -26,11 +26,12 @@ export async function GET() {
   }
 
   return NextResponse.json({
-    name:      data.name      ?? '',
-    teacher:   data.teacher   ?? '',
-    principal: data.principal ?? '',
-    logo:      data.logo      ?? '',
-    footer:    data.footer    ?? '',
+    name:          data.name          ?? '',
+    teacher:       data.teacher       ?? '',
+    principal:     data.principal     ?? '',
+    logo:          data.logo          ?? '',
+    footer:        data.footer        ?? '',
+    period_system: (data as any).period_system ?? 'semester',
   });
 }
 
@@ -54,7 +55,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   // Only pick the known profile fields — ignore anything else in the body.
-  const allowed = ['name', 'teacher', 'principal', 'logo', 'footer'] as const;
+  const allowed = ['name', 'teacher', 'principal', 'logo', 'footer', 'period_system'] as const;
   const update: Record<string, string> = {};
   for (const field of allowed) {
     if (field in body) {
@@ -64,6 +65,11 @@ export async function PATCH(request: NextRequest) {
 
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: 'No valid fields provided' }, { status: 400 });
+  }
+
+  // Validate period_system if present
+  if ('period_system' in update && !['semester', 'quarter'].includes(update.period_system)) {
+    return NextResponse.json({ error: 'period_system must be "semester" or "quarter"' }, { status: 400 });
   }
 
   const { error } = await supabase
