@@ -144,7 +144,7 @@ export default function StudentSignUp() {
                     />
                   </div>
                   <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                    This is the ID on your result sheet — check with your teacher.
+                    The ID you use to identify yourself at your school (e.g. GA250801).
                   </p>
                 </div>
 
@@ -237,7 +237,7 @@ export default function StudentSignUp() {
           <p className="text-sm font-medium text-white/60">You need:</p>
           <ul className="mt-2 space-y-1 text-sm text-white/80">
             <li>📋 Your <strong>School Code</strong> from your teacher</li>
-            <li>🪪 Your <strong>Student ID</strong> from your result sheet</li>
+            <li>🪪 Your <strong>Student ID</strong> assigned by your school</li>
           </ul>
         </div>
       </div>
