@@ -39,6 +39,7 @@ import {
   MdGridOn,
   MdGroups,
   MdHelpOutline,
+  MdHourglassTop,
   MdImage,
   MdLayers,
   MdLightMode,
@@ -1601,14 +1602,25 @@ function Upload({
 /* ---------- Students ---------- */
 
 function Students({ rows, total, className, query, grade, section, year, onReport }: any) {
-  // portalMap: student_code → { id (canonical UUID), portal_status }
+  // 1. School-wide pending portal requests — independent of all selectors
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+  const [pendingLoading, setPendingLoading]   = useState(false);
+  const [actionBusy, setActionBusy]           = useState<string | null>(null);
+
+  // 2. Per-class portal status map for badges on result-student cards
   const [portalMap, setPortalMap] = useState<Record<string, { id: string; status: string }>>({});
-  const [portalLoading, setPortalLoading] = useState(false);
-  const [actionBusy, setActionBusy] = useState<string | null>(null);
+
+  const loadPending = () => {
+    setPendingLoading(true);
+    fetch(`/api/students?portal_status=pending`)
+      .then(r => r.ok ? r.json() : { students: [] })
+      .then(d => setPendingRequests(d.students ?? []))
+      .catch(() => {})
+      .finally(() => setPendingLoading(false));
+  };
 
   const loadPortalMap = () => {
     if (!grade || !section || !year) return;
-    setPortalLoading(true);
     fetch(`/api/students?grade=${encodeURIComponent(grade)}&section=${encodeURIComponent(section)}&academic_year=${encodeURIComponent(year)}`)
       .then(r => r.ok ? r.json() : { students: [] })
       .then(d => {
@@ -1616,84 +1628,91 @@ function Students({ rows, total, className, query, grade, section, year, onRepor
         for (const s of d.students ?? []) map[s.student_code] = { id: s.id, status: s.portal_status };
         setPortalMap(map);
       })
-      .catch(() => {})
-      .finally(() => setPortalLoading(false));
+      .catch(() => {});
   };
 
+  useEffect(() => { loadPending(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadPortalMap(); }, [grade, section, year]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleStatusChange = async (studentCode: string, newStatus: 'active' | 'rejected') => {
-    const entry = portalMap[studentCode];
-    if (!entry) return;
-    setActionBusy(studentCode);
+  const handleStatusChange = async (studentId: string, studentCode: string, newStatus: string) => {
+    setActionBusy(studentId);
     try {
-      const res = await fetch(`/api/students/${entry.id}/status`, {
+      const res = await fetch(`/api/students/${studentId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ portal_status: newStatus }),
       });
       if (res.ok) {
-        setPortalMap(prev => ({ ...prev, [studentCode]: { ...entry, status: newStatus } }));
+        setPendingRequests(prev => prev.filter(s => s.id !== studentId));
+        if (portalMap[studentCode]) {
+          setPortalMap(prev => ({ ...prev, [studentCode]: { ...prev[studentCode], status: newStatus } }));
+        }
       }
     } catch { /* non-fatal */ }
     finally { setActionBusy(null); }
   };
 
   const portalBadge = (code: string) => {
-    const entry = portalMap[code];
-    if (!entry) return null;
-    if (entry.status === 'active')   return { label: 'Portal: Active',   cls: 'bg-horizonGreen-50 text-horizonGreen-700 dark:bg-horizonGreen-900/20 dark:text-horizonGreen-300' };
-    if (entry.status === 'pending')  return { label: 'Portal: Pending',  cls: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300' };
-    if (entry.status === 'rejected') return { label: 'Portal: Rejected', cls: 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300' };
-    return null; // inactive — no badge
+    const e = portalMap[code];
+    if (!e) return null;
+    if (e.status === `active`)   return { label: `Portal: Active`,   cls: `bg-horizonGreen-50 text-horizonGreen-700 dark:bg-horizonGreen-900/20 dark:text-horizonGreen-300` };
+    if (e.status === `pending`)  return { label: `Portal: Pending`,  cls: `bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300` };
+    if (e.status === `rejected`) return { label: `Portal: Rejected`, cls: `bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300` };
+    return null;
   };
-
-  // Students with pending portal requests — shown in approval section
-  const pendingStudents = rows.filter((r: Result) => portalMap[r.id]?.status === 'pending');
 
   return (
     <div className="space-y-6">
-      {/* ── Pending approvals banner ───────────────────────────────────────── */}
-      {!portalLoading && pendingStudents.length > 0 && (
-        <Card className="p-5 sm:p-6">
-          <p className="text-sm font-bold text-amber-600 dark:text-amber-400">PORTAL APPROVALS</p>
-          <h3 className="mt-1 text-lg font-bold text-navy-900 dark:text-white">
-            {pendingStudents.length} student{pendingStudents.length > 1 ? 's' : ''} awaiting approval
-          </h3>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            These students have registered a portal account and are waiting for your approval.
-          </p>
-          <div className="mt-4 divide-y divide-gray-100 dark:divide-navy-700">
-            {pendingStudents.map((r: Result) => (
-              <div key={r.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
-                <Avatar name={r.name} className="h-10 w-10 text-sm" />
-                <div className="min-w-0 flex-1">
-                  <p className="font-bold text-navy-900 dark:text-white">{r.name}</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">{r.id}</p>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    disabled={actionBusy === r.id}
-                    onClick={() => handleStatusChange(r.id, 'active')}
-                    className="rounded-xl bg-horizonGreen-500 px-4 py-2 text-xs font-bold text-white transition hover:bg-horizonGreen-600 disabled:opacity-50"
-                  >
-                    {actionBusy === r.id ? '…' : 'Approve'}
-                  </button>
-                  <button
-                    disabled={actionBusy === r.id}
-                    onClick={() => handleStatusChange(r.id, 'rejected')}
-                    className="rounded-xl border border-red-200 px-4 py-2 text-xs font-bold text-red-600 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-700/40 dark:hover:bg-red-900/20"
-                  >
-                    {actionBusy === r.id ? '…' : 'Reject'}
-                  </button>
-                </div>
-              </div>
-            ))}
+      {(pendingLoading || pendingRequests.length > 0) && (
+        <Card className="overflow-hidden">
+          <div className="flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-700/40 dark:bg-amber-900/20">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-amber-100 text-lg text-amber-600 dark:bg-amber-900/40">
+              <MdHourglassTop />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-bold text-amber-800 dark:text-amber-300">
+                {pendingLoading ? `Loading...` : `${pendingRequests.length} student${pendingRequests.length !== 1 ? `s` : ``} awaiting portal approval`}
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                These students registered for the student portal and need your approval.
+              </p>
+            </div>
           </div>
+          {!pendingLoading && (
+            <div className="divide-y divide-gray-100 dark:divide-navy-700">
+              {pendingRequests.map((s: any) => (
+                <div key={s.id} className="flex flex-wrap items-center gap-3 px-5 py-4">
+                  <Avatar name={s.full_name || s.student_code} className="h-10 w-10 shrink-0 text-sm" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-bold text-navy-900 dark:text-white">{s.full_name || `(no name)`}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      ID: {s.student_code}
+                      {s.grade ? ` · ${s.grade}${s.section}` : ` · (grade not yet assigned)`}
+                      {s.email ? ` · ${s.email}` : ``}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      disabled={actionBusy === s.id}
+                      onClick={() => handleStatusChange(s.id, s.student_code, `active`)}
+                      className="rounded-xl bg-horizonGreen-500 px-4 py-2 text-xs font-bold text-white transition hover:bg-horizonGreen-600 disabled:opacity-50"
+                    >
+                      {actionBusy === s.id ? `...` : `Approve`}
+                    </button>
+                    <button
+                      disabled={actionBusy === s.id}
+                      onClick={() => handleStatusChange(s.id, s.student_code, `rejected`)}
+                      className="rounded-xl border border-red-200 px-4 py-2 text-xs font-bold text-red-600 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-700/40 dark:hover:bg-red-900/20"
+                    >
+                      {actionBusy === s.id ? `...` : `Reject`}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
       )}
-
-      {/* ── Student directory ─────────────────────────────────────────────── */}
       <div>
         <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -1722,15 +1741,15 @@ function Students({ rows, total, className, query, grade, section, year, onRepor
                   </div>
                   <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-2">
                     {[
-                      { label: 'Total',      value: `${r.total}/${r.maximum}` },
-                      { label: 'Average',    value: r.average.toFixed(1) },
-                      { label: 'Percentage', value: `${r.percentage.toFixed(1)}%` },
-                      { label: 'Grade',      value: r.letterGrade, chip: true },
-                      { label: 'Status',     value: r.status, chip: true },
+                      { label: `Total`,      value: `${r.total}/${r.maximum}` },
+                      { label: `Average`,    value: r.average.toFixed(1) },
+                      { label: `Percentage`, value: `${r.percentage.toFixed(1)}%` },
+                      { label: `Grade`,      value: r.letterGrade, chip: true },
+                      { label: `Status`,     value: r.status, chip: true },
                     ].map((s) => (
                       <div key={s.label} className="rounded-xl bg-lightPrimary px-3 py-2.5 dark:bg-navy-700/60">
                         <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">{s.label}</p>
-                        <p className={`mt-0.5 truncate text-sm font-bold ${ (s as any).chip ? 'text-brand-500' : 'text-navy-900 dark:text-white' }`}>{s.value}</p>
+                        <p className={`mt-0.5 truncate text-sm font-bold ${ (s as any).chip ? `text-brand-500` : `text-navy-900 dark:text-white` }`}>{s.value}</p>
                       </div>
                     ))}
                   </div>

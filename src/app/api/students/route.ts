@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
   const grade        = searchParams.get('grade');
   const section      = searchParams.get('section');
   const academicYear = searchParams.get('academic_year');
+  const portalStatus = searchParams.get('portal_status');
 
   const service = createServiceClient();
 
@@ -27,11 +28,12 @@ export async function GET(request: NextRequest) {
     .from('students')
     .select('id, student_code, full_name, grade, section, academic_year, email, portal_status, created_at')
     .eq('school_id', teacherId)
-    .order('full_name', { ascending: true });
+    .order('created_at', { ascending: false });
 
   if (grade)        q = q.eq('grade', grade);
   if (section)      q = q.eq('section', section);
   if (academicYear) q = q.eq('academic_year', academicYear);
+  if (portalStatus) q = q.eq('portal_status', portalStatus);
 
   const { data, error } = await q;
 
