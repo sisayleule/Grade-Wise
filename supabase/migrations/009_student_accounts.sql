@@ -36,7 +36,7 @@ create table if not exists public.students (
   email            text,                       -- set when portal account is activated
   auth_user_id     uuid references auth.users(id) on delete set null,
   portal_status    text not null default 'inactive'
-                     check (portal_status in ('inactive', 'invited', 'active')),
+                     check (portal_status in ('inactive', 'invited', 'active', 'pending', 'rejected')),
   created_at       timestamptz not null default now(),
 
   -- One canonical record per student code per school

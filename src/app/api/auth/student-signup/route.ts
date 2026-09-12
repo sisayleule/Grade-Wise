@@ -142,17 +142,20 @@ export async function POST(request: NextRequest) {
         email:         emailNorm,
         auth_user_id:  authUserId,
         portal_status: 'pending',
-        // grade/section/academic_year left as '' until teacher uploads results
+        // grade/section/academic_year left blank until teacher uploads results
         // containing this student_code — the batch-save upsert will fill them in
-        grade:         '',
-        section:       '',
-        academic_year: '',
       });
 
     if (insertErr) {
+      // Roll back the auth user to keep data consistent
       await service.auth.admin.deleteUser(authUserId);
-      console.error('[student-signup] insert:', insertErr.message);
-      return NextResponse.json({ error: 'Failed to create student record. Please try again.' }, { status: 500 });
+      console.error('[student-signup] insert error code:', insertErr.code);
+      console.error('[student-signup] insert error msg:', insertErr.message);
+      console.error('[student-signup] insert details:', insertErr.details);
+      return NextResponse.json(
+        { error: 'Failed to create student record. Please try again.', detail: insertErr.message },
+        { status: 500 }
+      );
     }
   }
 

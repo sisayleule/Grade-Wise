@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireApproved } from 'lib/supabase/requireApproved';
 import { createServiceClient } from 'lib/supabase/service';
 
-const ALLOWED_STATUSES = ['active', 'rejected', 'inactive'] as const;
+const ALLOWED_STATUSES = ['active', 'rejected', 'inactive', 'pending'] as const;
 
 export async function PATCH(
   request: NextRequest,
