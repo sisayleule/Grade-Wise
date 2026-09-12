@@ -121,6 +121,7 @@ export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [contactName, setContactName] = useState('');
   const [periodSystem, setPeriodSystem] = useState<PeriodSystem>('semester');
+  const [schoolCode, setSchoolCode] = useState('');
 
   // ── DB persistence state ─────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
@@ -178,6 +179,7 @@ export default function Home() {
           setPeriodSystem(ps);
           // Set the default period selection to the first period of the system
           setSemester(ps === 'quarter' ? 'Quarter 1' : 'Semester 1');
+          if (p.school_code) setSchoolCode(p.school_code);
         }
       } catch { /* non-fatal — app works with empty profile */ }
       // Also load contact_name separately in case profile route doesn't include it
@@ -758,7 +760,7 @@ export default function Home() {
             />
           )}
           {page === 'settings' && (
-            <Settings school={school} setSchool={setSchool} periodSystem={periodSystem} setPeriodSystem={setPeriodSystem} />
+            <Settings school={school} setSchool={setSchool} periodSystem={periodSystem} setPeriodSystem={setPeriodSystem} schoolCode={schoolCode} />
           )}
         </section>
       </div>
@@ -1599,166 +1601,166 @@ function Upload({
 /* ---------- Students ---------- */
 
 function Students({ rows, total, className, query, grade, section, year, onReport }: any) {
-  const [portalMap, setPortalMap] = useState<Record<string, string>>({});
+  // portalMap: student_code → { id (canonical UUID), portal_status }
+  const [portalMap, setPortalMap] = useState<Record<string, { id: string; status: string }>>({});
   const [portalLoading, setPortalLoading] = useState(false);
-  const [portalModal, setPortalModal] = useState<{ studentCode: string; name: string; canonicalId: string } | null>(null);
-  const [portalEmail, setPortalEmail] = useState('');
-  const [portalSaving, setPortalSaving] = useState(false);
-  const [portalMsg, setPortalMsg] = useState('');
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadPortalMap = () => {
     if (!grade || !section || !year) return;
     setPortalLoading(true);
     fetch(`/api/students?grade=${encodeURIComponent(grade)}&section=${encodeURIComponent(section)}&academic_year=${encodeURIComponent(year)}`)
       .then(r => r.ok ? r.json() : { students: [] })
       .then(d => {
-        const map: Record<string, string> = {};
-        for (const s of d.students ?? []) map[s.student_code] = s.portal_status;
+        const map: Record<string, { id: string; status: string }> = {};
+        for (const s of d.students ?? []) map[s.student_code] = { id: s.id, status: s.portal_status };
         setPortalMap(map);
       })
       .catch(() => {})
       .finally(() => setPortalLoading(false));
-  }, [grade, section, year]);
-
-  const openPortalModal = async (r: Result) => {
-    const res = await fetch(`/api/students?grade=${encodeURIComponent(grade)}&section=${encodeURIComponent(section)}&academic_year=${encodeURIComponent(year)}`);
-    if (!res.ok) return;
-    const d = await res.json();
-    const found = (d.students ?? []).find((s: any) => s.student_code === r.id);
-    if (found) {
-      setPortalModal({ studentCode: r.id, name: r.name, canonicalId: found.id });
-      setPortalEmail('');
-      setPortalMsg('');
-    }
   };
 
-  const handlePortalCreate = async () => {
-    if (!portalModal || !portalEmail.trim()) return;
-    setPortalSaving(true);
-    setPortalMsg('');
+  useEffect(() => { loadPortalMap(); }, [grade, section, year]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleStatusChange = async (studentCode: string, newStatus: 'active' | 'rejected') => {
+    const entry = portalMap[studentCode];
+    if (!entry) return;
+    setActionBusy(studentCode);
     try {
-      const res = await fetch('/api/students/portal', {
-        method: 'POST',
+      const res = await fetch(`/api/students/${entry.id}/status`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ student_id: portalModal.canonicalId, email: portalEmail.trim() }),
+        body: JSON.stringify({ portal_status: newStatus }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setPortalMsg(data.error || 'Failed to create portal account.');
-      } else {
-        setPortalMap(prev => ({ ...prev, [portalModal.studentCode]: 'invited' }));
-        setPortalMsg('Invitation sent successfully.');
-        setTimeout(() => setPortalModal(null), 2500);
+      if (res.ok) {
+        setPortalMap(prev => ({ ...prev, [studentCode]: { ...entry, status: newStatus } }));
       }
-    } catch {
-      setPortalMsg('Network error — please try again.');
-    } finally {
-      setPortalSaving(false);
-    }
+    } catch { /* non-fatal */ }
+    finally { setActionBusy(null); }
   };
 
   const portalBadge = (code: string) => {
-    const s = portalMap[code];
-    if (s === 'active')  return { label: 'Active',  cls: 'bg-horizonGreen-50 text-horizonGreen-700 dark:bg-horizonGreen-900/20 dark:text-horizonGreen-300' };
-    if (s === 'invited') return { label: 'Invited', cls: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300' };
-    return null;
+    const entry = portalMap[code];
+    if (!entry) return null;
+    if (entry.status === 'active')   return { label: 'Portal: Active',   cls: 'bg-horizonGreen-50 text-horizonGreen-700 dark:bg-horizonGreen-900/20 dark:text-horizonGreen-300' };
+    if (entry.status === 'pending')  return { label: 'Portal: Pending',  cls: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300' };
+    if (entry.status === 'rejected') return { label: 'Portal: Rejected', cls: 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300' };
+    return null; // inactive — no badge
   };
 
+  // Students with pending portal requests — shown in approval section
+  const pendingStudents = rows.filter((r: Result) => portalMap[r.id]?.status === 'pending');
+
   return (
-    <div>
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-sm font-bold text-brand-500">STUDENT DIRECTORY</p>
-          <h2 className="mt-1 text-2xl font-bold text-navy-900 dark:text-white">
-            Students
-          </h2>
-        </div>
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          {query
-            ? `Showing ${rows.length} of ${total} students in ${className}`
-            : `${rows.length} students in ${className}`}
-        </p>
-      </div>
-      {rows.length ? (
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-          {rows.map((r: Result) => {
-            const badge = portalBadge(r.id);
-            return (
-              <Card key={r.id} className="p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <Avatar name={r.name} className="h-12 w-12 text-base" />
-                    <div className="min-w-0">
-                      <p className="truncate font-bold text-navy-900 dark:text-white">{r.name}</p>
-                      <p className="text-xs text-gray-600 dark:text-gray-400">{r.id} · {className}</p>
-                    </div>
-                  </div>
-                  <RankBadge rank={r.rank} />
+    <div className="space-y-6">
+      {/* ── Pending approvals banner ───────────────────────────────────────── */}
+      {!portalLoading && pendingStudents.length > 0 && (
+        <Card className="p-5 sm:p-6">
+          <p className="text-sm font-bold text-amber-600 dark:text-amber-400">PORTAL APPROVALS</p>
+          <h3 className="mt-1 text-lg font-bold text-navy-900 dark:text-white">
+            {pendingStudents.length} student{pendingStudents.length > 1 ? 's' : ''} awaiting approval
+          </h3>
+          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+            These students have registered a portal account and are waiting for your approval.
+          </p>
+          <div className="mt-4 divide-y divide-gray-100 dark:divide-navy-700">
+            {pendingStudents.map((r: Result) => (
+              <div key={r.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+                <Avatar name={r.name} className="h-10 w-10 text-sm" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold text-navy-900 dark:text-white">{r.name}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{r.id}</p>
                 </div>
-                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-2">
-                  {[
-                    { label: 'Total',      value: `${r.total}/${r.maximum}` },
-                    { label: 'Average',    value: r.average.toFixed(1) },
-                    { label: 'Percentage', value: `${r.percentage.toFixed(1)}%` },
-                    { label: 'Grade',      value: r.letterGrade, chip: true },
-                    { label: 'Status',     value: r.status, chip: true },
-                  ].map((s) => (
-                    <div key={s.label} className="rounded-xl bg-lightPrimary px-3 py-2.5 dark:bg-navy-700/60">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">{s.label}</p>
-                      <p className={`mt-0.5 truncate text-sm font-bold ${ (s as any).chip ? 'text-brand-500' : 'text-navy-900 dark:text-white' }`}>{s.value}</p>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-4 flex gap-2">
+                <div className="flex gap-2">
                   <button
-                    onClick={() => onReport(r)}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 py-2.5 text-sm font-bold text-brand-500 transition hover:bg-brand-50 dark:border-navy-600 dark:hover:bg-navy-700"
+                    disabled={actionBusy === r.id}
+                    onClick={() => handleStatusChange(r.id, 'active')}
+                    className="rounded-xl bg-horizonGreen-500 px-4 py-2 text-xs font-bold text-white transition hover:bg-horizonGreen-600 disabled:opacity-50"
                   >
-                    View report <MdChevronRight className="text-lg" />
+                    {actionBusy === r.id ? '…' : 'Approve'}
                   </button>
-                  {!portalLoading && (badge
-                    ? <span className={`inline-flex items-center rounded-xl px-3 py-2.5 text-xs font-bold ${badge.cls}`}>{badge.label}</span>
-                    : <button onClick={() => openPortalModal(r)} className="inline-flex items-center gap-1 rounded-xl border border-brand-200 px-3 py-2.5 text-xs font-bold text-brand-600 transition hover:bg-brand-50 dark:border-brand-700/40 dark:text-brand-300 dark:hover:bg-navy-700" title="Create student portal account"><MdSchool className="text-base" /> Portal</button>
-                  )}
+                  <button
+                    disabled={actionBusy === r.id}
+                    onClick={() => handleStatusChange(r.id, 'rejected')}
+                    className="rounded-xl border border-red-200 px-4 py-2 text-xs font-bold text-red-600 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-700/40 dark:hover:bg-red-900/20"
+                  >
+                    {actionBusy === r.id ? '…' : 'Reject'}
+                  </button>
                 </div>
-              </Card>
-            );
-          })}
-        </div>
-      ) : (
-        <Card className="p-12 text-center">
-          <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-brand-50 text-2xl text-brand-500 dark:bg-navy-700">
-            <MdGroups />
+              </div>
+            ))}
           </div>
-          <p className="mt-4 font-bold text-navy-900 dark:text-white">No results for this selection.</p>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Upload a result sheet or change the selectors above.</p>
         </Card>
       )}
 
-      {portalModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-navy-800">
-            <h3 className="text-lg font-bold text-navy-900 dark:text-white">Create Portal Account</h3>
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Student: <span className="font-bold text-navy-900 dark:text-white">{portalModal.name}</span></p>
-            <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">Enter the student&apos;s email. They will receive a link to set their password.</p>
-            <input
-              type="email"
-              value={portalEmail}
-              onChange={e => setPortalEmail(e.target.value)}
-              placeholder="student@email.com"
-              className="mt-4 h-12 w-full rounded-xl border border-gray-200 bg-lightPrimary px-4 text-sm text-navy-900 outline-none transition focus:border-brand-500 dark:border-navy-600 dark:bg-navy-700 dark:text-white"
-              onKeyDown={e => e.key === 'Enter' && handlePortalCreate()}
-            />
-            {portalMsg && (
-              <p className={`mt-3 text-sm font-medium ${portalMsg.startsWith('Invitation') ? 'text-horizonGreen-700 dark:text-horizonGreen-300' : 'text-red-600 dark:text-red-400'}`}>{portalMsg}</p>
-            )}
-            <div className="mt-5 flex gap-3">
-              <button onClick={() => setPortalModal(null)} disabled={portalSaving} className="flex-1 rounded-xl border border-gray-200 py-2.5 text-sm font-bold text-navy-900 transition hover:bg-lightPrimary disabled:opacity-50 dark:border-navy-600 dark:text-white">Cancel</button>
-              <button onClick={handlePortalCreate} disabled={portalSaving || !portalEmail.trim()} className="flex-1 rounded-xl bg-brand-500 py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(67,24,255,0.3)] transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50">{portalSaving ? 'Sending...' : 'Send invite'}</button>
-            </div>
+      {/* ── Student directory ─────────────────────────────────────────────── */}
+      <div>
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-bold text-brand-500">STUDENT DIRECTORY</p>
+            <h2 className="mt-1 text-2xl font-bold text-navy-900 dark:text-white">Students</h2>
           </div>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            {query ? `Showing ${rows.length} of ${total} students in ${className}` : `${rows.length} students in ${className}`}
+          </p>
         </div>
-      )}
+        {rows.length ? (
+          <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+            {rows.map((r: Result) => {
+              const badge = portalBadge(r.id);
+              return (
+                <Card key={r.id} className="p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Avatar name={r.name} className="h-12 w-12 text-base" />
+                      <div className="min-w-0">
+                        <p className="truncate font-bold text-navy-900 dark:text-white">{r.name}</p>
+                        <p className="text-xs text-gray-600 dark:text-gray-400">{r.id} · {className}</p>
+                      </div>
+                    </div>
+                    <RankBadge rank={r.rank} />
+                  </div>
+                  <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-2">
+                    {[
+                      { label: 'Total',      value: `${r.total}/${r.maximum}` },
+                      { label: 'Average',    value: r.average.toFixed(1) },
+                      { label: 'Percentage', value: `${r.percentage.toFixed(1)}%` },
+                      { label: 'Grade',      value: r.letterGrade, chip: true },
+                      { label: 'Status',     value: r.status, chip: true },
+                    ].map((s) => (
+                      <div key={s.label} className="rounded-xl bg-lightPrimary px-3 py-2.5 dark:bg-navy-700/60">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">{s.label}</p>
+                        <p className={`mt-0.5 truncate text-sm font-bold ${ (s as any).chip ? 'text-brand-500' : 'text-navy-900 dark:text-white' }`}>{s.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 flex items-center gap-2">
+                    <button
+                      onClick={() => onReport(r)}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 py-2.5 text-sm font-bold text-brand-500 transition hover:bg-brand-50 dark:border-navy-600 dark:hover:bg-navy-700"
+                    >
+                      View report <MdChevronRight className="text-lg" />
+                    </button>
+                    {badge && (
+                      <span className={`inline-flex items-center rounded-xl px-3 py-2.5 text-xs font-bold ${badge.cls}`}>
+                        {badge.label}
+                      </span>
+                    )}
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        ) : (
+          <Card className="p-12 text-center">
+            <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-brand-50 text-2xl text-brand-500 dark:bg-navy-700">
+              <MdGroups />
+            </div>
+            <p className="mt-4 font-bold text-navy-900 dark:text-white">No results for this selection.</p>
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Upload a result sheet or change the selectors above.</p>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }
@@ -2292,7 +2294,7 @@ function Reports({
 
 /* ---------- Settings ---------- */
 
-function Settings({ school, setSchool, periodSystem, setPeriodSystem }: any) {
+function Settings({ school, setSchool, periodSystem, setPeriodSystem, schoolCode }: any) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2416,6 +2418,30 @@ function Settings({ school, setSchool, periodSystem, setPeriodSystem }: any) {
           new period structure if needed.
         </p>
       </Card>
+
+      {/* School Code — share with students */}
+      {schoolCode && (
+        <Card className="p-6 sm:p-8">
+          <p className="text-sm font-bold text-brand-500">STUDENT PORTAL</p>
+          <h2 className="mt-1 text-2xl font-bold text-navy-900 dark:text-white">
+            Your School Code
+          </h2>
+          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+            Share this code with your students so they can register their portal accounts.
+          </p>
+          <div className="mt-5 flex items-center gap-4">
+            <div className="rounded-2xl bg-brand-50 px-6 py-4 dark:bg-navy-700">
+              <p className="font-mono text-3xl font-black tracking-[0.2em] text-brand-600 dark:text-brand-300">
+                {schoolCode}
+              </p>
+            </div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              <p>Students go to <strong>Sign In → Student? Create your account here</strong></p>
+              <p className="mt-1">and enter this code along with their Student ID.</p>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Gemini API Key — stored securely in Supabase Vault */}
       <Card className="p-6 sm:p-8">

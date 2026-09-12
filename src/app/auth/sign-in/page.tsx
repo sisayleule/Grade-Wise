@@ -293,6 +293,18 @@ export default function SignIn() {
               </>
             )}
           </p>
+
+          {/* Student portal link */}
+          {mode === 'signin' && (
+            <div className="mt-4 rounded-xl border border-gray-100 bg-lightPrimary px-4 py-3 text-center dark:border-navy-700 dark:bg-navy-800">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Are you a student?{' '}
+                <Link href="/auth/student-sign-up" className="font-bold text-brand-500 hover:underline">
+                  Create your student account here
+                </Link>
+              </p>
+            </div>
+          )}
         </div>
       </div>
 

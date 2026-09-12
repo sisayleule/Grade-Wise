@@ -16,7 +16,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from('schools')
-    .select('name, teacher, principal, logo, footer, period_system')
+    .select('name, teacher, principal, logo, footer, period_system, school_code')
     .eq('id', user.id)
     .single();
 
@@ -32,6 +32,7 @@ export async function GET() {
     logo:          data.logo          ?? '',
     footer:        data.footer        ?? '',
     period_system: (data as any).period_system ?? 'semester',
+    school_code:   (data as any).school_code   ?? '',
   });
 }
 

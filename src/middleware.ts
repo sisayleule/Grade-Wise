@@ -41,8 +41,11 @@ export async function middleware(request: NextRequest) {
     '/auth/rejected',
     '/auth/forgot-password',
     '/auth/reset-password',
+    '/auth/student-sign-up',
     '/api/auth/signup',
-    '/student',   // student portal (placeholder for Phase 4)
+    '/api/auth/student-signup',
+    '/student/pending',
+    '/student/rejected',
   ];
   const isPublic = publicPaths.some((p) => pathname.startsWith(p));
 
@@ -129,19 +132,52 @@ export async function middleware(request: NextRequest) {
           .single();
 
         if (studentRow) {
-          // Student is logged in — route them to /student, block teacher pages
-          if (pathname === '/auth/sign-in') {
+          const portalStatus = studentRow.portal_status ?? 'pending';
+
+          // ── Student status gate — mirrors the teacher approval gate ─────
+          if (portalStatus === 'pending' && !pathname.startsWith('/student/pending')) {
+            const url = request.nextUrl.clone();
+            url.pathname = '/student/pending';
+            return NextResponse.redirect(url);
+          }
+
+          if (portalStatus === 'rejected' && !pathname.startsWith('/student/rejected')) {
+            const url = request.nextUrl.clone();
+            url.pathname = '/student/rejected';
+            return NextResponse.redirect(url);
+          }
+
+          // Active student on a status page → redirect to portal
+          if (
+            portalStatus === 'active' &&
+            (pathname.startsWith('/student/pending') || pathname.startsWith('/student/rejected'))
+          ) {
             const url = request.nextUrl.clone();
             url.pathname = '/student';
+            return NextResponse.redirect(url);
+          }
+
+          // Route sign-in → student portal
+          if (pathname === '/auth/sign-in') {
+            const url = request.nextUrl.clone();
+            url.pathname = portalStatus === 'pending'
+              ? '/student/pending'
+              : portalStatus === 'rejected'
+              ? '/student/rejected'
+              : '/student';
             url.searchParams.delete('next');
             return NextResponse.redirect(url);
           }
 
-          // Block students from every teacher page and API (except public paths)
+          // Block students from teacher pages
           const studentAllowed = ['/student', '/auth/reset-password', '/auth/sign-in'];
           if (!studentAllowed.some((p) => pathname.startsWith(p))) {
             const url = request.nextUrl.clone();
-            url.pathname = '/student';
+            url.pathname = portalStatus === 'pending'
+              ? '/student/pending'
+              : portalStatus === 'rejected'
+              ? '/student/rejected'
+              : '/student';
             return NextResponse.redirect(url);
           }
         } else {
