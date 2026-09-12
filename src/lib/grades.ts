@@ -1,6 +1,6 @@
 export type ScoreRow = { id: string; name: string; scores: Record<string, string | number>; uncertain?: string[] };
 export type Result = ScoreRow & { total: number; maximum: number; average: number; percentage: number; rank: number; status: string; letterGrade: string };
-export type Batch = { id: string; year: string; className: string; semester: string; subjects: string[]; rows: Result[]; createdAt: string; fileName?: string; grade?: string; section?: string };
+export type Batch = { id: string; year: string; className: string; semester: string; subjects: string[]; rows: Result[]; createdAt: string; fileName?: string; grade?: string; section?: string; publishStatus?: string; publishedStudentIds?: string[]; updatedAt?: string; };
 export type School = { name: string; teacher: string; principal: string; footer: string; logo?: string };
 
 /** Which academic period structure this school uses. Defaults to 'semester'. */

@@ -136,7 +136,8 @@ export async function POST(request: NextRequest) {
       subjects:           subjects,
       num_students:       computed.length,
       processing_status:  'complete',
-    })
+      publish_status:     'processed',   // Phase 3: new batches start as 'processed', not 'published'
+    } as any)
     .select()
     .single();
 
@@ -241,16 +242,19 @@ function shapeBatch(raw: any) {
   }));
 
   return {
-    id:        raw.id,
-    year:      raw.academic_year,
-    grade:     raw.grade,
-    section:   raw.section,
-    className: `${raw.grade}${raw.section}`,
-    semester:  raw.semester,
-    subjects:  raw.subjects || [],
+    id:                   raw.id,
+    year:                 raw.academic_year,
+    grade:                raw.grade,
+    section:              raw.section,
+    className:            `${raw.grade}${raw.section}`,
+    semester:             raw.semester,
+    subjects:             raw.subjects || [],
     rows,
-    createdAt: raw.created_at,
-    fileName:  raw.uploaded_file_name,
+    createdAt:            raw.created_at,
+    updatedAt:            raw.updated_at,
+    fileName:             raw.uploaded_file_name,
+    publishStatus:        raw.publish_status ?? 'published',
+    publishedStudentIds:  Array.isArray(raw.published_student_ids) ? raw.published_student_ids : [],
   };
 }
 

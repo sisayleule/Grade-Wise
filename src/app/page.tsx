@@ -48,6 +48,7 @@ import {
   MdNotificationsNone,
   MdPeopleAlt,
   MdPictureAsPdf,
+  MdPublish,
   MdSchool,
   MdSearch,
   MdSettings,
@@ -733,12 +734,14 @@ export default function Home() {
             <Rankings
               rows={filtered}
               batches={batches}
+              setBatches={setBatches}
               grade={grade}
               section={section}
               semester={semester}
               year={year}
               query={q}
               school={school}
+              active={active}
               onReport={(r: Result) => {
                 setSelected(r);
                 setPage('reports');
@@ -1155,7 +1158,7 @@ function Dashboard({
         <Metric
           label="Result Batches"
           value={`${batches.length}`}
-          caption="Processed result sheets"
+          caption={`${batches.filter((b: Batch) => b.publishStatus === 'published').length} published · ${batches.filter((b: Batch) => b.publishStatus === 'processed' || b.publishStatus === 'reviewed').length} awaiting publish`}
           icon={MdLayers}
           iconClass="bg-horizonGreen-50 text-horizonGreen-600 dark:bg-navy-700 dark:text-horizonGreen-300"
         />
@@ -1971,15 +1974,64 @@ function gradeRankingRows(
 function Rankings({
   rows,
   batches,
+  setBatches,
   grade,
   section,
   semester,
   year,
   query,
   school,
+  active,
   onReport,
 }: any) {
   const [mode, setMode] = useState<'section' | 'grade'>('section');
+  const [publishing, setPublishing] = useState(false);
+  const [publishMsg, setPublishMsg] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectMode, setSelectMode] = useState(false);
+
+  const currentStatus = active?.publishStatus ?? null;
+  const canPublish = currentStatus === 'processed' || currentStatus === 'reviewed';
+  const isPublished = currentStatus === 'published';
+
+  const publishBatch = async (studentIds?: string[]) => {
+    if (!active?.id) return;
+    setPublishing(true);
+    setPublishMsg('');
+    try {
+      const body: Record<string, any> = { publish_status: 'published' };
+      if (studentIds) body.published_student_ids = studentIds;
+      const res = await fetch(`/api/batches/${active.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed');
+      const d = await res.json();
+      // Update local batches state
+      setBatches((old: Batch[]) => old.map((b) =>
+        b.id === active.id
+          ? { ...b, publishStatus: 'published', publishedStudentIds: d.published_student_ids ?? [] }
+          : b
+      ));
+      setPublishMsg(studentIds ? `Published ${studentIds.length} student${studentIds.length !== 1 ? 's' : ''}.` : 'Published to all students.');
+      setSelectedIds(new Set());
+      setSelectMode(false);
+    } catch (e: any) {
+      setPublishMsg(e.message || 'Publish failed.');
+    } finally {
+      setPublishing(false);
+      setTimeout(() => setPublishMsg(''), 4000);
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
   const q = (query || '').trim().toLowerCase();
   const gradeData = useMemo(
     () =>
@@ -2011,7 +2063,9 @@ function Rankings({
     <Card className="p-5 sm:p-6">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-sm font-bold text-brand-500">PROCESSED RESULTS</p>
+          <p className="text-sm font-bold text-brand-500">
+            {currentStatus ? `STATUS: ${currentStatus.toUpperCase()}` : 'PROCESSED RESULTS'}
+          </p>
           <h2 className="mt-1 text-2xl font-bold text-navy-900 dark:text-white">
             {title}
           </h2>
@@ -2051,6 +2105,51 @@ function Rankings({
           >
             <MdDownload className="text-lg" /> Download Ranking DOC
           </button>
+
+          {/* ── Publish controls (only in section mode for a real batch) ── */}
+          {mode === 'section' && active?.id && (
+            <div className="flex flex-wrap gap-2 self-start sm:self-auto">
+              {isPublished ? (
+                <span className="inline-flex items-center gap-1.5 rounded-xl bg-horizonGreen-50 px-3 py-2 text-xs font-bold text-horizonGreen-700 dark:bg-horizonGreen-900/20 dark:text-horizonGreen-300">
+                  <MdCheckCircle /> Published
+                </span>
+              ) : canPublish ? (
+                <>
+                  <button
+                    disabled={publishing}
+                    onClick={() => publishBatch()}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-4 py-2 text-xs font-bold text-white shadow-[0_4px_12px_rgba(67,24,255,0.3)] transition hover:bg-brand-600 disabled:opacity-50"
+                  >
+                    <MdPublish /> {publishing ? 'Publishing…' : 'Publish to All'}
+                  </button>
+                  <button
+                    onClick={() => setSelectMode(!selectMode)}
+                    className={`inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-xs font-bold transition ${selectMode ? 'border-brand-500 bg-brand-50 text-brand-600 dark:bg-brand-900/20' : 'border-gray-200 text-navy-900 hover:bg-lightPrimary dark:border-navy-600 dark:text-white dark:hover:bg-navy-700'}`}
+                  >
+                    Select students
+                  </button>
+                  {selectMode && selectedIds.size > 0 && (
+                    <button
+                      disabled={publishing}
+                      onClick={() => publishBatch(Array.from(selectedIds))}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-4 py-2 text-xs font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+                    >
+                      <MdPublish /> Publish {selectedIds.size} selected
+                    </button>
+                  )}
+                </>
+              ) : (
+                <span className="inline-flex items-center rounded-xl bg-lightPrimary px-3 py-2 text-xs font-bold text-gray-500 dark:bg-navy-700 dark:text-gray-400">
+                  {currentStatus ?? 'No batch'}
+                </span>
+              )}
+            </div>
+          )}
+          {publishMsg && (
+            <p className="self-start text-xs font-medium text-horizonGreen-700 dark:text-horizonGreen-300 sm:self-auto">
+              {publishMsg}
+            </p>
+          )}
         </div>
       </div>
 
@@ -2069,6 +2168,7 @@ function Rankings({
         <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="border-y border-gray-200 bg-lightPrimary/60 text-left text-xs uppercase tracking-wide text-gray-600 dark:border-navy-700 dark:bg-navy-700/60 dark:text-gray-400">
+              {selectMode && mode === 'section' && <th className="p-3.5 w-10" />}
               <th className="p-3.5 font-bold">Rank</th>
               <th className="p-3.5 font-bold">Student</th>
               <th className="p-3.5 font-bold">Class</th>
@@ -2087,6 +2187,16 @@ function Rankings({
                   r.rank <= 3 ? 'bg-lightPrimary/70 dark:bg-navy-700/30' : ''
                 }`}
               >
+                {selectMode && mode === 'section' && (
+                  <td className="p-3.5">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(r.id)}
+                      onChange={() => toggleSelect(r.id)}
+                      className="h-4 w-4 cursor-pointer rounded accent-brand-500"
+                    />
+                  </td>
+                )}
                 <td className="p-3.5">
                   <RankBadge rank={r.rank} />
                 </td>
