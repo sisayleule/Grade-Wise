@@ -25,14 +25,12 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // Refresh session — IMPORTANT: no logic between createServerClient and getUser().
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // IMPORTANT: no logic between createServerClient and getUser().
+  const { data: { user } } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
 
-  // ── Paths that never require authentication or approval ──────────────────
+  // ── Public paths — never require auth ────────────────────────────────────
   const publicPaths = [
     '/auth/sign-in',
     '/auth/sign-up',
@@ -49,7 +47,7 @@ export async function middleware(request: NextRequest) {
   ];
   const isPublic = publicPaths.some((p) => pathname.startsWith(p));
 
-  // ── 1. Unauthenticated users ─────────────────────────────────────────────
+  // ── 1. Unauthenticated ───────────────────────────────────────────────────
   if (!user && !isPublic) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -60,135 +58,125 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // ── 2. Authenticated users ────────────────────────────────────────────────
-  if (user) {
-    const isApiRoute = pathname.startsWith('/api/');
+  // ── 2. Authenticated — determine account type ────────────────────────────
+  if (user && !pathname.startsWith('/api/')) {
 
-    if (!isApiRoute) {
-      // ── Determine account type ────────────────────────────────────────────
-      // Check schools table first (fast path for teachers — the common case).
-      const { data: school } = await supabase
-        .from('schools')
-        .select('status, is_admin')
-        .eq('id', user.id)
-        .single();
+    // ── STUDENT check FIRST ───────────────────────────────────────────────
+    // A student auth user may also have a phantom schools row (created by
+    // the handle_new_user trigger before migration 011 fixed it). Checking
+    // students first ensures students are never mis-routed as teachers.
+    const { data: studentRow } = await supabase
+      .from('students')
+      .select('id, portal_status')
+      .eq('auth_user_id', user.id)
+      .maybeSingle();
 
-      if (school) {
-        // ── TEACHER path ────────────────────────────────────────────────────
-        const status  = school.status  ?? 'pending';
-        const isAdmin = school.is_admin ?? false;
+    if (studentRow) {
+      const ps = studentRow.portal_status ?? 'pending';
 
-        if (status === 'pending' && pathname !== '/auth/pending-approval') {
+      const studentDest = ps === 'pending'
+        ? '/student/pending'
+        : ps === 'rejected'
+        ? '/student/rejected'
+        : '/student';
+
+      // Already on the right status page — let through
+      if (pathname.startsWith(studentDest)) return supabaseResponse;
+
+      // On a status page but status has changed → redirect to correct dest
+      if (
+        pathname.startsWith('/student/pending') ||
+        pathname.startsWith('/student/rejected') ||
+        pathname.startsWith('/student')
+      ) {
+        if (!pathname.startsWith(studentDest)) {
           const url = request.nextUrl.clone();
-          url.pathname = '/auth/pending-approval';
+          url.pathname = studentDest;
           return NextResponse.redirect(url);
         }
+        return supabaseResponse;
+      }
 
-        if (
-          (status === 'rejected' || status === 'suspended') &&
-          pathname !== '/auth/rejected'
-        ) {
-          const url = request.nextUrl.clone();
-          url.pathname = '/auth/rejected';
-          return NextResponse.redirect(url);
-        }
+      // Sign-in page → redirect to student portal
+      if (pathname === '/auth/sign-in') {
+        const url = request.nextUrl.clone();
+        url.pathname = studentDest;
+        url.searchParams.delete('next');
+        return NextResponse.redirect(url);
+      }
 
-        if (
-          status === 'approved' &&
-          (pathname === '/auth/pending-approval' || pathname === '/auth/rejected')
-        ) {
-          const url = request.nextUrl.clone();
-          url.pathname = isAdmin ? '/school-admin' : '/';
-          return NextResponse.redirect(url);
-        }
+      // Any other page (teacher pages, reset-password etc.) → redirect to portal
+      const studentAllowed = ['/student', '/auth/reset-password'];
+      if (!studentAllowed.some((p) => pathname.startsWith(p))) {
+        const url = request.nextUrl.clone();
+        url.pathname = studentDest;
+        return NextResponse.redirect(url);
+      }
 
-        if (pathname.startsWith('/school-admin') && !isAdmin) {
-          const url = request.nextUrl.clone();
-          url.pathname = '/';
-          return NextResponse.redirect(url);
-        }
+      return supabaseResponse;
+    }
 
-        if (pathname === '/auth/sign-in') {
-          const url = request.nextUrl.clone();
-          url.pathname = isAdmin ? '/school-admin' : '/';
-          url.searchParams.delete('next');
-          return NextResponse.redirect(url);
-        }
+    // ── TEACHER / ADMIN check ─────────────────────────────────────────────
+    const { data: school } = await supabase
+      .from('schools')
+      .select('status, is_admin')
+      .eq('id', user.id)
+      .single();
 
-        // ── Block teachers from the student portal ────────────────────────
-        if (pathname.startsWith('/student')) {
-          const url = request.nextUrl.clone();
-          url.pathname = '/';
-          return NextResponse.redirect(url);
-        }
+    if (school) {
+      const status  = school.status  ?? 'pending';
+      const isAdmin = school.is_admin ?? false;
 
-      } else {
-        // ── STUDENT path ────────────────────────────────────────────────────
-        // No row in schools → check if this auth.uid() is a student portal account.
-        const { data: studentRow } = await supabase
-          .from('students')
-          .select('id, portal_status')
-          .eq('auth_user_id', user.id)
-          .single();
+      if (status === 'pending' && pathname !== '/auth/pending-approval') {
+        const url = request.nextUrl.clone();
+        url.pathname = '/auth/pending-approval';
+        return NextResponse.redirect(url);
+      }
 
-        if (studentRow) {
-          const portalStatus = studentRow.portal_status ?? 'pending';
+      if (
+        (status === 'rejected' || status === 'suspended') &&
+        pathname !== '/auth/rejected'
+      ) {
+        const url = request.nextUrl.clone();
+        url.pathname = '/auth/rejected';
+        return NextResponse.redirect(url);
+      }
 
-          // ── Student status gate — mirrors the teacher approval gate ─────
-          if (portalStatus === 'pending' && !pathname.startsWith('/student/pending')) {
-            const url = request.nextUrl.clone();
-            url.pathname = '/student/pending';
-            return NextResponse.redirect(url);
-          }
+      if (
+        status === 'approved' &&
+        (pathname === '/auth/pending-approval' || pathname === '/auth/rejected')
+      ) {
+        const url = request.nextUrl.clone();
+        url.pathname = isAdmin ? '/school-admin' : '/';
+        return NextResponse.redirect(url);
+      }
 
-          if (portalStatus === 'rejected' && !pathname.startsWith('/student/rejected')) {
-            const url = request.nextUrl.clone();
-            url.pathname = '/student/rejected';
-            return NextResponse.redirect(url);
-          }
+      if (pathname.startsWith('/school-admin') && !isAdmin) {
+        const url = request.nextUrl.clone();
+        url.pathname = '/';
+        return NextResponse.redirect(url);
+      }
 
-          // Active student on a status page → redirect to portal
-          if (
-            portalStatus === 'active' &&
-            (pathname.startsWith('/student/pending') || pathname.startsWith('/student/rejected'))
-          ) {
-            const url = request.nextUrl.clone();
-            url.pathname = '/student';
-            return NextResponse.redirect(url);
-          }
+      if (pathname === '/auth/sign-in') {
+        const url = request.nextUrl.clone();
+        url.pathname = isAdmin ? '/school-admin' : '/';
+        url.searchParams.delete('next');
+        return NextResponse.redirect(url);
+      }
 
-          // Route sign-in → student portal
-          if (pathname === '/auth/sign-in') {
-            const url = request.nextUrl.clone();
-            url.pathname = portalStatus === 'pending'
-              ? '/student/pending'
-              : portalStatus === 'rejected'
-              ? '/student/rejected'
-              : '/student';
-            url.searchParams.delete('next');
-            return NextResponse.redirect(url);
-          }
+      // Block teachers from student portal
+      if (pathname.startsWith('/student')) {
+        const url = request.nextUrl.clone();
+        url.pathname = '/';
+        return NextResponse.redirect(url);
+      }
 
-          // Block students from teacher pages
-          const studentAllowed = ['/student', '/auth/reset-password', '/auth/sign-in'];
-          if (!studentAllowed.some((p) => pathname.startsWith(p))) {
-            const url = request.nextUrl.clone();
-            url.pathname = portalStatus === 'pending'
-              ? '/student/pending'
-              : portalStatus === 'rejected'
-              ? '/student/rejected'
-              : '/student';
-            return NextResponse.redirect(url);
-          }
-        } else {
-          // Auth user exists but is neither a school nor a student — orphaned account.
-          // Send to sign-in to avoid an infinite redirect loop.
-          if (pathname !== '/auth/sign-in') {
-            const url = request.nextUrl.clone();
-            url.pathname = '/auth/sign-in';
-            return NextResponse.redirect(url);
-          }
-        }
+    } else {
+      // Auth user is neither a student nor a school — orphaned account.
+      if (pathname !== '/auth/sign-in') {
+        const url = request.nextUrl.clone();
+        url.pathname = '/auth/sign-in';
+        return NextResponse.redirect(url);
       }
     }
   }
