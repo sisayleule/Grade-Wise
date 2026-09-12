@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from 'lib/supabase/server';
+import { createServiceClient } from 'lib/supabase/service';
 import { computeResults } from 'lib/grades';
 import { requireApproved } from 'lib/supabase/requireApproved';
 
@@ -144,21 +145,60 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to save batch' }, { status: 500 });
   }
 
-  // ── Insert students ────────────────────────────────────────────────────────
+  // ── Upsert canonical students + insert result_students ───────────────────
+  // Step A: upsert into public.students (one row per student_code per school).
+  // This is a background sync step — it never blocks or changes the visible
+  // upload flow. Uses the service client to bypass RLS (teacher inserts via
+  // anon client would also work, but service client is simpler here).
+  const service = createServiceClient();
+
+  const canonicalUpserts = computed.map((r) => ({
+    school_id:     userId,
+    student_code:  r.id  || '',
+    full_name:     r.name || '',
+    grade,
+    section,
+    academic_year: year,
+  }));
+
+  // upsert: on conflict(school_id, student_code) update name/grade/section/year
+  const { data: upsertedStudents, error: upsertErr } = await (service as any)
+    .from('students')
+    .upsert(canonicalUpserts, {
+      onConflict:        'school_id,student_code',
+      ignoreDuplicates:  false,
+    })
+    .select('id, student_code');
+
+  if (upsertErr) {
+    // Non-fatal: log but do not block the save — existing behaviour is preserved
+    console.error('[batches POST] canonical student upsert:', upsertErr.message);
+  }
+
+  // Build a code→canonical_id map so we can set student_ref_id below
+  const codeToRefId = new Map<string, string>();
+  if (upsertedStudents) {
+    for (const s of upsertedStudents as { id: string; student_code: string }[]) {
+      codeToRefId.set(s.student_code, s.id);
+    }
+  }
+
+  // Step B: insert result_students with student_ref_id set where available
   const studentRows = computed.map((r) => ({
-    batch_id:     batch.id,
-    student_id:   r.id || '',
-    student_name: r.name || '',
-    scores:       r.scores,
-    total:        r.total,
-    average:      r.average,
-    percentage:   r.percentage,
-    rank:         r.rank,
+    batch_id:        batch.id,
+    student_id:      r.id || '',
+    student_name:    r.name || '',
+    scores:          r.scores,
+    total:           r.total,
+    average:         r.average,
+    percentage:      r.percentage,
+    rank:            r.rank,
+    student_ref_id:  codeToRefId.get(r.id || '') ?? null,
   }));
 
   const { error: studErr } = await supabase
     .from('result_students')
-    .insert(studentRows);
+    .insert(studentRows as any);  // cast: student_ref_id not yet in generated types
 
   if (studErr) {
     console.error('[batches POST] insert students:', studErr.message);

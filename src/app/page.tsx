@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { ChangeEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
@@ -704,6 +704,9 @@ export default function Home() {
               total={rows.length}
               className={classLabel}
               query={q}
+              grade={grade}
+              section={section}
+              year={year}
               onReport={(r: Result) => {
                 setSelected(r);
                 setPage('reports');
@@ -1595,7 +1598,72 @@ function Upload({
 
 /* ---------- Students ---------- */
 
-function Students({ rows, total, className, query, onReport }: any) {
+function Students({ rows, total, className, query, grade, section, year, onReport }: any) {
+  const [portalMap, setPortalMap] = useState<Record<string, string>>({});
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [portalModal, setPortalModal] = useState<{ studentCode: string; name: string; canonicalId: string } | null>(null);
+  const [portalEmail, setPortalEmail] = useState('');
+  const [portalSaving, setPortalSaving] = useState(false);
+  const [portalMsg, setPortalMsg] = useState('');
+
+  useEffect(() => {
+    if (!grade || !section || !year) return;
+    setPortalLoading(true);
+    fetch(`/api/students?grade=${encodeURIComponent(grade)}&section=${encodeURIComponent(section)}&academic_year=${encodeURIComponent(year)}`)
+      .then(r => r.ok ? r.json() : { students: [] })
+      .then(d => {
+        const map: Record<string, string> = {};
+        for (const s of d.students ?? []) map[s.student_code] = s.portal_status;
+        setPortalMap(map);
+      })
+      .catch(() => {})
+      .finally(() => setPortalLoading(false));
+  }, [grade, section, year]);
+
+  const openPortalModal = async (r: Result) => {
+    const res = await fetch(`/api/students?grade=${encodeURIComponent(grade)}&section=${encodeURIComponent(section)}&academic_year=${encodeURIComponent(year)}`);
+    if (!res.ok) return;
+    const d = await res.json();
+    const found = (d.students ?? []).find((s: any) => s.student_code === r.id);
+    if (found) {
+      setPortalModal({ studentCode: r.id, name: r.name, canonicalId: found.id });
+      setPortalEmail('');
+      setPortalMsg('');
+    }
+  };
+
+  const handlePortalCreate = async () => {
+    if (!portalModal || !portalEmail.trim()) return;
+    setPortalSaving(true);
+    setPortalMsg('');
+    try {
+      const res = await fetch('/api/students/portal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ student_id: portalModal.canonicalId, email: portalEmail.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setPortalMsg(data.error || 'Failed to create portal account.');
+      } else {
+        setPortalMap(prev => ({ ...prev, [portalModal.studentCode]: 'invited' }));
+        setPortalMsg('Invitation sent successfully.');
+        setTimeout(() => setPortalModal(null), 2500);
+      }
+    } catch {
+      setPortalMsg('Network error — please try again.');
+    } finally {
+      setPortalSaving(false);
+    }
+  };
+
+  const portalBadge = (code: string) => {
+    const s = portalMap[code];
+    if (s === 'active')  return { label: 'Active',  cls: 'bg-horizonGreen-50 text-horizonGreen-700 dark:bg-horizonGreen-900/20 dark:text-horizonGreen-300' };
+    if (s === 'invited') return { label: 'Invited', cls: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300' };
+    return null;
+  };
+
   return (
     <div>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
@@ -1613,73 +1681,83 @@ function Students({ rows, total, className, query, onReport }: any) {
       </div>
       {rows.length ? (
         <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-          {rows.map((r: Result, i: number) => (
-            <Card key={r.id} className="p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <Avatar
-                    name={r.name}
-                    className="h-12 w-12 text-base"
-                  />
-                  <div className="min-w-0">
-                    <p className="truncate font-bold text-navy-900 dark:text-white">
-                      {r.name}
-                    </p>
-                    <p className="text-xs text-gray-600 dark:text-gray-400">
-                      {r.id} · {className}
-                    </p>
+          {rows.map((r: Result) => {
+            const badge = portalBadge(r.id);
+            return (
+              <Card key={r.id} className="p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Avatar name={r.name} className="h-12 w-12 text-base" />
+                    <div className="min-w-0">
+                      <p className="truncate font-bold text-navy-900 dark:text-white">{r.name}</p>
+                      <p className="text-xs text-gray-600 dark:text-gray-400">{r.id} · {className}</p>
+                    </div>
                   </div>
+                  <RankBadge rank={r.rank} />
                 </div>
-                <RankBadge rank={r.rank} />
-              </div>
-              <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-2">
-                {[
-                  { label: 'Total', value: `${r.total}/${r.maximum}` },
-                  { label: 'Average', value: r.average.toFixed(1) },
-                  { label: 'Percentage', value: `${r.percentage.toFixed(1)}%` },
-                  { label: 'Grade', value: r.letterGrade, chip: true },
-                  { label: 'Status', value: r.status, chip: true },
-                ].map((s) => (
-                  <div
-                    key={s.label}
-                    className="rounded-xl bg-lightPrimary px-3 py-2.5 dark:bg-navy-700/60"
+                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-2">
+                  {[
+                    { label: 'Total',      value: `${r.total}/${r.maximum}` },
+                    { label: 'Average',    value: r.average.toFixed(1) },
+                    { label: 'Percentage', value: `${r.percentage.toFixed(1)}%` },
+                    { label: 'Grade',      value: r.letterGrade, chip: true },
+                    { label: 'Status',     value: r.status, chip: true },
+                  ].map((s) => (
+                    <div key={s.label} className="rounded-xl bg-lightPrimary px-3 py-2.5 dark:bg-navy-700/60">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">{s.label}</p>
+                      <p className={`mt-0.5 truncate text-sm font-bold ${ (s as any).chip ? 'text-brand-500' : 'text-navy-900 dark:text-white' }`}>{s.value}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    onClick={() => onReport(r)}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 py-2.5 text-sm font-bold text-brand-500 transition hover:bg-brand-50 dark:border-navy-600 dark:hover:bg-navy-700"
                   >
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      {s.label}
-                    </p>
-                    <p
-                      className={`mt-0.5 truncate text-sm font-bold ${
-                        (s as any).chip
-                          ? 'text-brand-500'
-                          : 'text-navy-900 dark:text-white'
-                      }`}
-                    >
-                      {s.value}
-                    </p>
-                  </div>
-                ))}
-              </div>
-              <button
-                onClick={() => onReport(r)}
-                className="mt-5 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-gray-200 py-2.5 text-sm font-bold text-brand-500 transition hover:bg-brand-50 dark:border-navy-600 dark:hover:bg-navy-700"
-              >
-                View report <MdChevronRight className="text-lg" />
-              </button>
-            </Card>
-          ))}
+                    View report <MdChevronRight className="text-lg" />
+                  </button>
+                  {!portalLoading && (badge
+                    ? <span className={`inline-flex items-center rounded-xl px-3 py-2.5 text-xs font-bold ${badge.cls}`}>{badge.label}</span>
+                    : <button onClick={() => openPortalModal(r)} className="inline-flex items-center gap-1 rounded-xl border border-brand-200 px-3 py-2.5 text-xs font-bold text-brand-600 transition hover:bg-brand-50 dark:border-brand-700/40 dark:text-brand-300 dark:hover:bg-navy-700" title="Create student portal account"><MdSchool className="text-base" /> Portal</button>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
         </div>
       ) : (
         <Card className="p-12 text-center">
           <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-brand-50 text-2xl text-brand-500 dark:bg-navy-700">
             <MdGroups />
           </div>
-          <p className="mt-4 font-bold text-navy-900 dark:text-white">
-            No students match “{query}”
-          </p>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Try a different name or student ID.
-          </p>
+          <p className="mt-4 font-bold text-navy-900 dark:text-white">No results for this selection.</p>
+          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Upload a result sheet or change the selectors above.</p>
         </Card>
+      )}
+
+      {portalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-navy-800">
+            <h3 className="text-lg font-bold text-navy-900 dark:text-white">Create Portal Account</h3>
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Student: <span className="font-bold text-navy-900 dark:text-white">{portalModal.name}</span></p>
+            <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">Enter the student&apos;s email. They will receive a link to set their password.</p>
+            <input
+              type="email"
+              value={portalEmail}
+              onChange={e => setPortalEmail(e.target.value)}
+              placeholder="student@email.com"
+              className="mt-4 h-12 w-full rounded-xl border border-gray-200 bg-lightPrimary px-4 text-sm text-navy-900 outline-none transition focus:border-brand-500 dark:border-navy-600 dark:bg-navy-700 dark:text-white"
+              onKeyDown={e => e.key === 'Enter' && handlePortalCreate()}
+            />
+            {portalMsg && (
+              <p className={`mt-3 text-sm font-medium ${portalMsg.startsWith('Invitation') ? 'text-horizonGreen-700 dark:text-horizonGreen-300' : 'text-red-600 dark:text-red-400'}`}>{portalMsg}</p>
+            )}
+            <div className="mt-5 flex gap-3">
+              <button onClick={() => setPortalModal(null)} disabled={portalSaving} className="flex-1 rounded-xl border border-gray-200 py-2.5 text-sm font-bold text-navy-900 transition hover:bg-lightPrimary disabled:opacity-50 dark:border-navy-600 dark:text-white">Cancel</button>
+              <button onClick={handlePortalCreate} disabled={portalSaving || !portalEmail.trim()} className="flex-1 rounded-xl bg-brand-500 py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(67,24,255,0.3)] transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50">{portalSaving ? 'Sending...' : 'Send invite'}</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
