@@ -3,6 +3,21 @@ export type Result = ScoreRow & { total: number; maximum: number; average: numbe
 export type Batch = { id: string; year: string; className: string; semester: string; subjects: string[]; rows: Result[]; createdAt: string; fileName?: string; grade?: string; section?: string };
 export type School = { name: string; teacher: string; principal: string; footer: string; logo?: string };
 
+/** Which academic period structure this school uses. Defaults to 'semester'. */
+export type PeriodSystem = 'semester' | 'quarter';
+
+/** Period labels for each system. */
+export const SEMESTER_PERIODS = ['Semester 1', 'Semester 2'] as const;
+export const QUARTER_PERIODS  = ['Quarter 1', 'Quarter 2', 'Quarter 3', 'Quarter 4'] as const;
+
+/** All valid period strings that the API will accept. */
+export const ALL_VALID_PERIODS: string[] = [...SEMESTER_PERIODS, ...QUARTER_PERIODS];
+
+/** Returns the base period options (without 'Full Year') for the given system. */
+export function basePeriods(system: PeriodSystem): string[] {
+  return system === 'quarter' ? [...QUARTER_PERIODS] : [...SEMESTER_PERIODS];
+}
+
 export const initialSchool: School = { name: '', teacher: '', principal: '', footer: '' };
 export const initialRows: ScoreRow[] = [];
 
@@ -43,10 +58,51 @@ export function computeResults(rows: ScoreRow[], subjects: string[]): Result[] {
 
 export function buildAnnual(first?: Batch, second?: Batch): Batch | undefined {
   if (!first || !second) return undefined;
-  const subjects = Array.from(new Set([...first.subjects, ...second.subjects]));
-  const secondById = new Map(second.rows.map((row) => [row.id, row]));
-  const rows: ScoreRow[] = first.rows.map((row) => { const other = secondById.get(row.id); return { id: row.id, name: row.name, scores: Object.fromEntries(subjects.map((subject) => [subject, other && row.scores[subject] !== undefined && other.scores[subject] !== undefined ? (Number(row.scores[subject]) + Number(other.scores[subject])) / 2 : row.scores[subject] ?? other?.scores[subject] ?? ''])) }; });
-  return { id: `${first.id}-annual`, year: first.year, className: first.className, semester: 'Full Year', subjects, rows: computeResults(rows, subjects), createdAt: new Date().toISOString() };
+  return buildAnnualFromBatches([first, second]);
+}
+
+/**
+ * Generalised Full Year merge.
+ * Accepts 2 (semester) or 4 (quarter) batches and averages per-subject scores
+ * across all of them for each student.
+ * Returns undefined if the batches array is empty or any entry is missing.
+ */
+export function buildAnnualFromBatches(batches: (Batch | undefined)[]): Batch | undefined {
+  const valid = batches.filter((b): b is Batch => b !== undefined);
+  if (valid.length === 0 || valid.length !== batches.length) return undefined;
+
+  // Union of all subjects across all batches
+  const subjects = Array.from(new Set(valid.flatMap((b) => b.subjects)));
+
+  // Use the first batch's student list as the anchor.
+  // Build per-batch ID maps for fast lookup.
+  const maps = valid.map((b) => new Map(b.rows.map((r) => [r.id, r])));
+
+  const rows: ScoreRow[] = valid[0].rows.map((anchorRow) => {
+    const scores: Record<string, number | string> = {};
+    for (const subject of subjects) {
+      // Gather all scores for this subject across every batch (where present)
+      const vals = maps
+        .map((m) => m.get(anchorRow.id))
+        .filter((r): r is Result => r !== undefined)
+        .map((r) => Number(r.scores[subject]))
+        .filter((v) => Number.isFinite(v));
+      scores[subject] = vals.length > 0
+        ? vals.reduce((a, b) => a + b, 0) / vals.length
+        : '';
+    }
+    return { id: anchorRow.id, name: anchorRow.name, scores };
+  });
+
+  return {
+    id: `${valid.map((b) => b.id).join('-')}-annual`,
+    year: valid[0].year,
+    className: valid[0].className,
+    semester: 'Full Year',
+    subjects,
+    rows: computeResults(rows, subjects),
+    createdAt: new Date().toISOString(),
+  };
 }
 
 export function validateRows(rows: ScoreRow[], subjects: string[]) {

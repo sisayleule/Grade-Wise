@@ -6,11 +6,16 @@ import Report from 'components/sgms/Report';
 import GeminiKeyField from 'components/sgms/GeminiKeyField';
 import { createClient } from 'lib/supabase/client';
 import {
+  ALL_VALID_PERIODS,
   Batch,
+  basePeriods,
   buildAnnual,
+  buildAnnualFromBatches,
   computeResults,
   getLetterGrade,
   initialRows,
+  PeriodSystem,
+  QUARTER_PERIODS,
   Result,
   School,
   ScoreRow,
@@ -115,6 +120,7 @@ export default function Home() {
   const [extractNote, setExtractNote] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
   const [contactName, setContactName] = useState('');
+  const [periodSystem, setPeriodSystem] = useState<PeriodSystem>('semester');
 
   // ── DB persistence state ─────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
@@ -168,6 +174,10 @@ export default function Home() {
             footer:    p.footer    ?? '',
           });
           if (p.contact_name) setContactName(p.contact_name);
+          const ps: PeriodSystem = p.period_system === 'quarter' ? 'quarter' : 'semester';
+          setPeriodSystem(ps);
+          // Set the default period selection to the first period of the system
+          setSemester(ps === 'quarter' ? 'Quarter 1' : 'Semester 1');
         }
       } catch { /* non-fatal — app works with empty profile */ }
       // Also load contact_name separately in case profile route doesn't include it
@@ -189,6 +199,12 @@ export default function Home() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
   }, [dark]);
+
+  // When the period system changes, reset the selected period to the first option
+  // of the new system so we never show e.g. "Semester 1" in a quarter-mode school.
+  useEffect(() => {
+    setSemester(periodSystem === 'quarter' ? 'Quarter 1' : 'Semester 1');
+  }, [periodSystem]);
 
   const issues = useMemo(() => validateRows(draft, subjects), [draft, subjects]);
 
@@ -213,35 +229,42 @@ export default function Home() {
     [batches, year, grade]
   );
 
-  // Whether both semesters exist for the current year+grade+section
+  // Whether all periods exist for a Full Year view (2 for semester, 4 for quarter)
   const hasFullYear = useMemo(() => {
-    const hasSem = (sem: string) =>
-      batches.some(
-        (b) => b.year === year && b.className === classLabel && b.semester === sem
-      );
-    return hasSem('Semester 1') && hasSem('Semester 2');
-  }, [batches, year, classLabel]);
+    const hasPeriod = (p: string) =>
+      batches.some((b) => b.year === year && b.className === classLabel && b.semester === p);
+    if (periodSystem === 'quarter') {
+      return QUARTER_PERIODS.every(hasPeriod);
+    }
+    return hasPeriod('Semester 1') && hasPeriod('Semester 2');
+  }, [batches, year, classLabel, periodSystem]);
 
   const semesterOptions = useMemo(
-    () => ['Semester 1', 'Semester 2', ...(hasFullYear ? ['Full Year'] : [])],
-    [hasFullYear]
+    () => [...basePeriods(periodSystem), ...(hasFullYear ? ['Full Year'] : [])],
+    [hasFullYear, periodSystem]
   );
 
   const active = useMemo(() => {
     if (semester === 'Full Year') {
+      if (periodSystem === 'quarter') {
+        const quarters = QUARTER_PERIODS.map((q) =>
+          batches.find((b) => b.year === year && b.className === classLabel && b.semester === q)
+        );
+        return buildAnnualFromBatches(quarters) ?? null;
+      }
+      // Semester system
       const s1 = batches.find(
         (b) => b.year === year && b.className === classLabel && b.semester === 'Semester 1'
       );
       const s2 = batches.find(
         (b) => b.year === year && b.className === classLabel && b.semester === 'Semester 2'
       );
-      // buildAnnual returns undefined when either semester is missing — no fallback
       return buildAnnual(s1, s2) ?? null;
     }
     return batches.find(
       (b) => b.year === year && b.className === classLabel && b.semester === semester
     ) ?? null;
-  }, [batches, year, classLabel, semester]);
+  }, [batches, year, classLabel, semester, periodSystem]);
 
   const rows = active?.rows ?? [];
   const activeSubjects = active?.subjects ?? subjects;
@@ -732,7 +755,7 @@ export default function Home() {
             />
           )}
           {page === 'settings' && (
-            <Settings school={school} setSchool={setSchool} />
+            <Settings school={school} setSchool={setSchool} periodSystem={periodSystem} setPeriodSystem={setPeriodSystem} />
           )}
         </section>
       </div>
@@ -2191,7 +2214,7 @@ function Reports({
 
 /* ---------- Settings ---------- */
 
-function Settings({ school, setSchool }: any) {
+function Settings({ school, setSchool, periodSystem, setPeriodSystem }: any) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2269,6 +2292,51 @@ function Settings({ school, setSchool }: any) {
             <span className="text-xs text-red-500">Could not save — check your connection.</span>
           )}
         </div>
+      </Card>
+
+      {/* Academic period structure */}
+      <Card className="p-6 sm:p-8">
+        <p className="text-sm font-bold text-brand-500">ACADEMIC CALENDAR</p>
+        <h2 className="mt-1 text-2xl font-bold text-navy-900 dark:text-white">
+          Academic Period Structure
+        </h2>
+        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+          Choose how your school divides the academic year. This controls the
+          period selector on every page. Existing saved results are not affected.
+        </p>
+        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          {([
+            ['semester', 'Semester (2 terms)', 'Semester 1 and Semester 2'],
+            ['quarter',  'Quarter (4 terms)',   'Quarter 1, 2, 3 and Quarter 4'],
+          ] as [string, string, string][]).map(([val, title, sub]) => (
+            <button
+              key={val}
+              type="button"
+              onClick={() => {
+                setPeriodSystem(val);
+                fetch('/api/settings/profile', {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ period_system: val }),
+                });
+              }}
+              className={`rounded-xl border-2 p-4 text-left transition ${
+                periodSystem === val
+                  ? 'border-brand-500 bg-brand-50 dark:bg-navy-700/60'
+                  : 'border-gray-200 hover:border-brand-300 dark:border-navy-600 dark:hover:border-brand-500'
+              }`}
+            >
+              <p className={`font-bold ${periodSystem === val ? 'text-brand-600 dark:text-brand-300' : 'text-navy-900 dark:text-white'}`}>
+                {title}
+              </p>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{sub}</p>
+            </button>
+          ))}
+        </div>
+        <p className="mt-4 text-xs text-gray-400 dark:text-gray-500">
+          Switching systems will reset the period selector. Re-upload results under the
+          new period structure if needed.
+        </p>
       </Card>
 
       {/* Gemini API Key — stored securely in Supabase Vault */}
