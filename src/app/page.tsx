@@ -2025,12 +2025,88 @@ function Rankings({
     }
   };
 
+  // ── Edit scores state ────────────────────────────────────────────────────
+  const [editTarget, setEditTarget] = useState<Result | null>(null);
+  const [editScores, setEditScores] = useState<Record<string, string>>({});
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [confirmPublishedEdit, setConfirmPublishedEdit] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+
+  const openEdit = (r: Result) => {
+    setEditTarget(r);
+    setEditScores(
+      Object.fromEntries(
+        (active?.subjects ?? []).map((s: string) => [s, String(r.scores[s] ?? '')])
+      )
+    );
+    setEditError('');
+    setConfirmPublishedEdit(false);
+  };
+
+  const closeEdit = () => {
+    setEditTarget(null);
+    setEditScores({});
+    setEditError('');
+    setConfirmPublishedEdit(false);
+  };
+
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  };
+
+  const sendEdit = async (confirmed: boolean) => {
+    if (!active?.id || !editTarget) return;
+    setEditSaving(true);
+    setEditError('');
+    try {
+      const body: Record<string, any> = {
+        student_id: editTarget.id,
+        scores:     Object.fromEntries(
+          Object.entries(editScores).map(([k, v]) => [k, Number(v)])
+        ),
+      };
+      if (confirmed) body.confirmed_published_edit = true;
+
+      const res = await fetch(`/api/batches/${active.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (res.status === 428) {
+        // Published batch — need confirmation
+        setConfirmPublishedEdit(true);
+        setEditSaving(false);
+        return;
+      }
+
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Failed to save');
+      }
+
+      // Success — reload batches to get recomputed ranks
+      const refreshed = await fetch('/api/batches');
+      if (refreshed.ok) {
+        const d = await refreshed.json();
+        setBatches(d.batches.map((b: any) => {
+          const grade = b.grade || b.className?.match(/^Grade \d+/)?.[0] || '';
+          const section = b.section || b.className?.replace(/^Grade \d+/, '') || 'A';
+          return { ...b, grade, section, className: `${grade}${section}` };
+        }));
+      }
+      setLastUpdated(new Date().toLocaleString());
+      closeEdit();
+    } catch (e: any) {
+      setEditError(e.message || 'Could not save changes.');
+    } finally {
+      setEditSaving(false);
+    }
   };
   const q = (query || '').trim().toLowerCase();
   const gradeData = useMemo(
@@ -2060,6 +2136,7 @@ function Rankings({
       ? `All ${grade} sections · ${semester} · ${year}`
       : `${grade}${section} · ${semester} · ${year}`;
   return (
+    <>
     <Card className="p-5 sm:p-6">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -2236,12 +2313,22 @@ function Rankings({
                   </span>
                 </td>
                 <td className="p-3.5 text-right">
-                  <button
-                    onClick={() => onReport(r)}
-                    className="inline-flex items-center gap-0.5 rounded-lg px-2.5 py-1.5 font-bold text-brand-500 transition hover:bg-brand-50 dark:hover:bg-navy-700"
-                  >
-                    View report <MdChevronRight className="text-lg" />
-                  </button>
+                  <div className="inline-flex items-center gap-1">
+                    {mode === 'section' && active?.id && (
+                      <button
+                        onClick={() => openEdit(r)}
+                        className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-gray-500 transition hover:bg-lightPrimary hover:text-navy-900 dark:text-gray-400 dark:hover:bg-navy-700 dark:hover:text-white"
+                      >
+                        Edit
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onReport(r)}
+                      className="inline-flex items-center gap-0.5 rounded-lg px-2.5 py-1.5 font-bold text-brand-500 transition hover:bg-brand-50 dark:hover:bg-navy-700"
+                    >
+                      View report <MdChevronRight className="text-lg" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -2306,6 +2393,101 @@ function Rankings({
         ))}
       </div>
     </Card>
+
+    {/* ── Edit scores modal ─────────────────────────────────────────────── */}
+    {editTarget && !confirmPublishedEdit && (
+      <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-navy-900/60 backdrop-blur-sm" onClick={closeEdit} />
+        <div className="relative w-full max-w-lg rounded-2xl bg-white p-7 shadow-2xl dark:bg-navy-800">
+          <h3 className="text-lg font-bold text-navy-900 dark:text-white">Edit scores</h3>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            {editTarget.name} · {editTarget.id}
+            {isPublished && (
+              <span className="ml-2 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                Published batch — confirmation required to save
+              </span>
+            )}
+          </p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            {(active?.subjects ?? []).map((s: string) => (
+              <label key={s} className="block text-sm font-bold text-navy-900 dark:text-white">
+                {s}
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={editScores[s] ?? ''}
+                  onChange={e => setEditScores(prev => ({ ...prev, [s]: e.target.value }))}
+                  className="mt-1 h-10 w-full rounded-xl border border-gray-200 bg-lightPrimary px-3 text-sm font-normal text-navy-900 outline-none transition focus:border-brand-500 dark:border-navy-600 dark:bg-navy-700 dark:text-white"
+                />
+              </label>
+            ))}
+          </div>
+          {editError && (
+            <p className="mt-3 text-sm text-red-600 dark:text-red-400">{editError}</p>
+          )}
+          <div className="mt-6 flex gap-3">
+            <button onClick={closeEdit} disabled={editSaving} className="flex-1 rounded-xl border border-gray-200 py-3 text-sm font-bold text-navy-900 transition hover:bg-lightPrimary disabled:opacity-50 dark:border-navy-600 dark:text-white">
+              Cancel
+            </button>
+            <button
+              onClick={() => sendEdit(false)}
+              disabled={editSaving}
+              className="flex-1 rounded-xl bg-brand-500 py-3 text-sm font-bold text-white shadow-[0_8px_20px_rgba(67,24,255,0.3)] transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {editSaving ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ── Published-edit confirmation dialog ───────────────────────────── */}
+    {confirmPublishedEdit && editTarget && (
+      <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-navy-900/60 backdrop-blur-sm" />
+        <div className="relative w-full max-w-md rounded-2xl bg-white p-7 shadow-2xl dark:bg-navy-800">
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-amber-50 text-2xl text-amber-500 dark:bg-amber-900/30">
+            <MdWarningAmber />
+          </div>
+          <h3 className="mt-4 text-center text-xl font-bold text-navy-900 dark:text-white">
+            Already published
+          </h3>
+          <p className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
+            This result has already been published to students.<br />
+            Save this change anyway?
+          </p>
+          {editError && (
+            <p className="mt-3 text-center text-sm text-red-600 dark:text-red-400">{editError}</p>
+          )}
+          <div className="mt-6 flex gap-3">
+            <button
+              onClick={closeEdit}
+              disabled={editSaving}
+              className="flex-1 rounded-xl border border-gray-200 py-3 text-sm font-bold text-navy-900 transition hover:bg-lightPrimary disabled:opacity-50 dark:border-navy-600 dark:text-white"
+            >
+              Cancel — discard
+            </button>
+            <button
+              onClick={() => sendEdit(true)}
+              disabled={editSaving}
+              className="flex-1 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 py-3 text-sm font-bold text-white shadow-[0_8px_20px_rgba(217,119,6,0.3)] transition hover:opacity-90 disabled:opacity-60"
+            >
+              {editSaving ? 'Saving…' : 'Yes, save change'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ── Last updated timestamp ─────────────────────────────────────────── */}
+    {lastUpdated && (
+      <p className="mt-2 text-center text-xs text-gray-400 dark:text-gray-500">
+        Last updated: {lastUpdated}
+      </p>
+    )}
+  </>
   );
 }
 
