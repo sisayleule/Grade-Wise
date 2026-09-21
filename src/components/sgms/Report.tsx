@@ -34,7 +34,7 @@ export default function Report({
         <h1 className="text-2xl font-bold text-navy-900">{school.name}</h1>
         <p className="text-sm text-gray-600">Official Academic Progress Report</p>
       </header>
-      <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
+      <div className="grid grid-cols-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
         <p>
           <b className="text-navy-900">Student:</b> {student.name}
         </p>
@@ -61,7 +61,8 @@ export default function Report({
           <b className="text-navy-900">Rank:</b> {student.rank}
         </p>
       </div>
-      <table className="mt-6 w-full border-collapse text-sm">
+      <div className="mt-6 overflow-x-auto">
+      <table className="w-full min-w-[360px] border-collapse text-sm">
         <thead>
           <tr className="bg-navy-900 text-left text-white">
             <th className="p-3 font-bold">Subject</th>
@@ -85,6 +86,7 @@ export default function Report({
           ))}
         </tbody>
       </table>
+      </div>
       <div className="mt-6 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
         <Stat label="Total" value={`${student.total}/${student.maximum}`} />
         <Stat label="Average" value={student.average.toFixed(1)} />
@@ -92,7 +94,7 @@ export default function Report({
         <Stat label="Grade" value={student.letterGrade} highlight />
         <Stat label="Remark" value={student.status} />
       </div>
-      <footer className="mt-14 grid grid-cols-2 gap-10 text-center text-sm">
+      <footer className="mt-14 grid grid-cols-2 gap-4 text-center text-sm sm:gap-10">
         <div className="border-t-2 border-gray-300 pt-2">
           {school.teacher}
           <br />
