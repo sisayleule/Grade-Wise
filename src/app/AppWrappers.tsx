@@ -9,7 +9,10 @@ import 'styles/index.css';
 
 import dynamic from 'next/dynamic';
 
-const _NoSSR = ({ children }) => <React.Fragment>{children}</React.Fragment>;
+// The NoSSR wrapper prevents SSR of children — some of the global CSS files
+// imported above use browser globals (document, window) that break during
+// Next.js static prerendering. This wrapper is kept deliberately.
+const _NoSSR = ({ children }: { children: ReactNode }) => <React.Fragment>{children}</React.Fragment>;
 
 const NoSSR = dynamic(() => Promise.resolve(_NoSSR), {
   ssr: false,

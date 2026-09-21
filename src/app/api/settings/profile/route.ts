@@ -16,7 +16,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from('schools')
-    .select('name, teacher, principal, logo, footer, period_system, school_code')
+    .select('name, teacher, principal, logo, footer, period_system, school_code, contact_name')
     .eq('id', user.id)
     .single();
 
@@ -26,13 +26,14 @@ export async function GET() {
   }
 
   return NextResponse.json({
-    name:          data.name          ?? '',
-    teacher:       data.teacher       ?? '',
-    principal:     data.principal     ?? '',
-    logo:          data.logo          ?? '',
-    footer:        data.footer        ?? '',
-    period_system: (data as any).period_system ?? 'semester',
-    school_code:   (data as any).school_code   ?? '',
+    name:          data.name                    ?? '',
+    teacher:       data.teacher                 ?? '',
+    principal:     data.principal               ?? '',
+    logo:          data.logo                    ?? '',
+    footer:        data.footer                  ?? '',
+    period_system: (data as any).period_system  ?? 'semester',
+    school_code:   (data as any).school_code    ?? '',
+    contact_name:  (data as any).contact_name   ?? '',
   });
 }
 

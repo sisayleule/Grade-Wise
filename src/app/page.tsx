@@ -2,9 +2,18 @@
 import { ChangeEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
-import Report from 'components/sgms/Report';
-import GeminiKeyField from 'components/sgms/GeminiKeyField';
 import { createClient } from 'lib/supabase/client';
+
+// ── Lazy-loaded page components ───────────────────────────────────────────────
+// Each loads only when the teacher first clicks that nav item.
+// This keeps the initial JS bundle small and makes every nav click instant —
+// the component chunk is fetched once in the background; subsequent clicks
+// are instant from cache.
+const Report               = dynamic(() => import('components/sgms/Report'),       { ssr: false });
+const RosterComponent      = dynamic(() => import('components/sgms/Roster'),       { ssr: false });
+const AssessmentsComponent = dynamic(() => import('components/sgms/Assessments'),  { ssr: false });
+const GeminiKeyField       = dynamic(() => import('components/sgms/GeminiKeyField'), { ssr: false });
+const Charts               = dynamic(() => import('./Charts'),                      { ssr: false });
 import {
   ALL_VALID_PERIODS,
   Batch,
@@ -25,6 +34,8 @@ import { extractFromFile } from 'lib/extract';
 import {
   MdAdd,
   MdAdminPanelSettings,
+  MdArrowBack,
+  MdAssignment,
   MdCheckCircle,
   MdChevronRight,
   MdClose,
@@ -36,6 +47,7 @@ import {
   MdDownload,
   MdEmojiEvents,
   MdErrorOutline,
+  MdFormatListBulleted,
   MdGridOn,
   MdGroups,
   MdHelpOutline,
@@ -45,8 +57,11 @@ import {
   MdLightMode,
   MdLogout,
   MdMenu,
+  MdMessage,
   MdNotificationsNone,
   MdPeopleAlt,
+  MdSend,
+  MdSupportAgent,
   MdPictureAsPdf,
   MdPublish,
   MdSchool,
@@ -59,24 +74,28 @@ import {
   MdWorkspacePremium,
 } from 'react-icons/md';
 
-const Charts = dynamic(() => import('./Charts'), { ssr: false });
-
 type Page =
   | 'dashboard'
   | 'upload'
+  | 'roster'
+  | 'assessments'
   | 'students'
   | 'classes'
   | 'rankings'
   | 'reports'
-  | 'settings';
+  | 'settings'
+  | 'messages';
 const nav: { id: Page; label: string; icon: any }[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: MdDashboard },
-  { id: 'upload', label: 'Upload Results', icon: MdCloudUpload },
-  { id: 'students', label: 'Students', icon: MdGroups },
-  { id: 'classes', label: 'Grades / Classes', icon: MdSchool },
-  { id: 'rankings', label: 'Rankings', icon: MdEmojiEvents },
-  { id: 'reports', label: 'Student Reports', icon: MdDescription },
-  { id: 'settings', label: 'Settings', icon: MdSettings },
+  { id: 'dashboard',   label: 'Dashboard',            icon: MdDashboard },
+  { id: 'upload',      label: 'Upload Results',        icon: MdCloudUpload },
+  { id: 'roster',      label: 'Class Roster',          icon: MdFormatListBulleted },
+  { id: 'assessments', label: 'Assessments',           icon: MdAssignment },
+  { id: 'students',    label: 'Students',              icon: MdGroups },
+  { id: 'classes',     label: 'Grades / Classes',      icon: MdSchool },
+  { id: 'rankings',    label: 'Rankings',              icon: MdEmojiEvents },
+  { id: 'reports',     label: 'Student Reports',       icon: MdDescription },
+  { id: 'messages',    label: 'Messages',              icon: MdSupportAgent },
+  { id: 'settings',    label: 'Settings',              icon: MdSettings },
 ];
 const classOptions = Array.from({ length: 12 }, (_, i) => `Grade ${i + 1}`);
 const sectionOptions = Array.from({ length: 10 }, (_, i) =>
@@ -125,9 +144,24 @@ export default function Home() {
   const [periodSystem, setPeriodSystem] = useState<PeriodSystem>('semester');
   const [schoolCode, setSchoolCode] = useState('');
 
-  // ── DB persistence state ─────────────────────────────────────────────────
+  // ── Unread message count (for bell badge + Messages nav badge) ───────────
+  const [unreadMsgCount, setUnreadMsgCount] = useState(0);
+  // Load once on mount; re-fetches whenever the teacher opens the Messages page
+  const loadUnreadMsgCount = useCallback(async () => {
+    try {
+      const res = await fetch('/api/notifications?limit=1&unread=true');
+      if (res.ok) {
+        const d = await res.json();
+        setUnreadMsgCount(d.unread_count ?? 0);
+      }
+    } catch { /* non-fatal */ }
+  }, []);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  // Roster warnings returned by POST /api/batches when some result-sheet IDs
+  // are not in the class roster.  Shown as an amber notice after a successful
+  // save — does not block the save.
+  const [rosterWarnings, setRosterWarnings] = useState<string[]>([]);
   // When the API returns 409 conflict, we store the existing batch info here
   // so the replace-or-cancel dialog can show it.
   const [replaceDialog, setReplaceDialog] = useState<{
@@ -136,13 +170,28 @@ export default function Home() {
   } | null>(null);
   const [batchesLoading, setBatchesLoading] = useState(false);
 
+  // ── Roster state — the canonical student list for the selected class ──────
+  // Loaded from /api/roster whenever grade/section/year changes.
+  // Used to show student count and names even when no result batch exists yet.
+  const [rosterStudents, setRosterStudents] = useState<Array<{
+    id: string;
+    student_code: string;
+    full_name: string;
+    roll_number: string;
+    sex: string;
+    portal_status: string;
+  }>>([]);
+
   // ── Load batches from DB ─────────────────────────────────────────────────
   const loadBatches = useCallback(async () => {
     setBatchesLoading(true);
     try {
       const res = await fetch('/api/batches');
       if (res.status === 401) {
-        // Session expired — middleware will redirect on next navigation
+        // Session expired — middleware will redirect on next navigation.
+        // Also push explicitly so the teacher sees the sign-in page immediately
+        // rather than staring at stale data.
+        router.push('/auth/sign-in?next=/');
         return;
       }
       if (!res.ok) throw new Error('Failed to load results');
@@ -156,17 +205,38 @@ export default function Home() {
     }
   }, []);
 
+  // ── Load roster for the selected class ────────────────────────────────────
+  // Runs whenever year, grade, or section changes so the Dashboard and Students
+  // page always reflect the real class list even before any results are uploaded.
+  // Also called imperatively via onSaved from the Roster component after a save,
+  // so the Dashboard count and Students list refresh without a selector change.
+  const loadRoster = useCallback(() => {
+    if (!year || !grade || !section) return;
+    fetch(
+      `/api/roster?year=${encodeURIComponent(year)}&grade=${encodeURIComponent(grade)}&section=${encodeURIComponent(section)}`
+    )
+      .then((r) => (r.ok ? r.json() : { students: [] }))
+      .then((d) => setRosterStudents(d.students ?? []))
+      .catch(() => setRosterStudents([]));
+  }, [year, grade, section]);
+
+  useEffect(() => {
+    loadRoster();
+  }, [loadRoster]);
+
   // ── Load school profile + contact_name from DB; load batches ────────────
   useEffect(() => {
     loadBatches();
+    loadUnreadMsgCount();
     // Check if the current user is admin (silent — 403 means not admin)
     fetch('/api/admin/schools').then(r => { if (r.ok) setIsAdmin(true); }).catch(() => {});
     // Load school profile and contact_name from DB
     (async () => {
+      // /api/settings/profile now returns contact_name — no separate
+      // Supabase browser call needed. Removed the old getUser() + schools
+      // query that was duplicating work already done by this API route.
       try {
-        const [profileRes] = await Promise.all([
-          fetch('/api/settings/profile'),
-        ]);
+        const profileRes = await fetch('/api/settings/profile');
         if (profileRes.ok) {
           const p = await profileRes.json();
           setSchool({
@@ -179,26 +249,12 @@ export default function Home() {
           if (p.contact_name) setContactName(p.contact_name);
           const ps: PeriodSystem = p.period_system === 'quarter' ? 'quarter' : 'semester';
           setPeriodSystem(ps);
-          // Set the default period selection to the first period of the system
           setSemester(ps === 'quarter' ? 'Quarter 1' : 'Semester 1');
           if (p.school_code) setSchoolCode(p.school_code);
         }
       } catch { /* non-fatal — app works with empty profile */ }
-      // Also load contact_name separately in case profile route doesn't include it
-      try {
-        const supabase = createClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data: row } = await supabase
-            .from('schools')
-            .select('contact_name')
-            .eq('id', user.id)
-            .single();
-          if (row?.contact_name) setContactName(row.contact_name);
-        }
-      } catch { /* non-fatal */ }
     })();
-  }, [loadBatches]);
+  }, [loadBatches, loadUnreadMsgCount]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
@@ -304,6 +360,7 @@ export default function Home() {
     if (issues.length) return;
     setSaving(true);
     setSaveError('');
+    setRosterWarnings([]);
 
     const payload = {
       year,
@@ -331,6 +388,13 @@ export default function Home() {
         return;
       }
 
+      if (res.status === 401) {
+        // Session expired — redirect to sign-in, return to this page after
+        router.push('/auth/sign-in?next=/');
+        setSaving(false);
+        return;
+      }
+
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || 'Failed to save results');
@@ -351,7 +415,13 @@ export default function Home() {
         ),
       ]);
       setReplaceDialog(null);
-      setPage('rankings');
+      // Surface roster warnings (partial roster mismatches) without blocking
+      if (data.roster_warnings?.length) {
+        setRosterWarnings(data.roster_warnings);
+        // Stay on the upload page so the teacher sees the warnings immediately
+      } else {
+        setPage('rankings');
+      }
     } catch (err: any) {
       setSaveError(err.message || 'Could not save results. Please try again.');
     } finally {
@@ -408,6 +478,11 @@ export default function Home() {
       );
     } catch (error: any) {
       const msg: string = error?.message || 'Unable to extract this file.';
+      // Session expired — redirect immediately rather than showing a confusing error
+      if (/must be signed in|sign in and try again|401|unauthorized/i.test(msg)) {
+        router.push('/auth/sign-in?next=/');
+        return;
+      }
       // Quota / rate-limit errors and "no key" errors → show inline in the amber
       // note banner so the table isn't left in a broken state.
       if (/daily.*limit|quota|try again after midnight|resource.exhausted|429|no gemini api key|add your gemini api key|settings.*gemini/i.test(msg)) {
@@ -504,8 +579,13 @@ export default function Home() {
                 >
                   <Icon />
                 </span>
-                {item.label}
-                {active && (
+                <span className="flex-1">{item.label}</span>
+                {item.id === 'messages' && unreadMsgCount > 0 && (
+                  <span className={`ml-auto grid min-w-[20px] place-items-center rounded-full px-1.5 py-0.5 text-[11px] font-bold leading-none ${active ? 'bg-brand-500 text-white' : 'bg-brand-500 text-white'}`}>
+                    {unreadMsgCount > 99 ? '99+' : unreadMsgCount}
+                  </span>
+                )}
+                {active && unreadMsgCount === 0 && (
                   <span className="ml-auto h-2 w-2 rounded-full bg-brand-500" />
                 )}
               </button>
@@ -590,10 +670,17 @@ export default function Home() {
             </button>
             <button
               title="Notifications"
+              onClick={() => { setPage('messages'); setMenu(false); }}
               className="relative grid h-10 w-10 place-items-center rounded-xl border border-gray-200 text-xl text-navy-900 transition hover:bg-lightPrimary dark:border-navy-700 dark:text-white dark:hover:bg-navy-800"
             >
               <MdNotificationsNone />
-              <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-horizonRed-500 ring-2 ring-white dark:ring-navy-900" />
+              {unreadMsgCount > 0 ? (
+                <span className="absolute -right-1 -top-1 grid min-w-[18px] place-items-center rounded-full bg-brand-500 px-1 py-px text-[9px] font-bold leading-none text-white ring-2 ring-white dark:ring-navy-900">
+                  {unreadMsgCount > 99 ? '99+' : unreadMsgCount}
+                </span>
+              ) : (
+                <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-horizonRed-500 ring-2 ring-white dark:ring-navy-900" />
+              )}
             </button>
             <button
               title="Help & information"
@@ -628,7 +715,64 @@ export default function Home() {
         </header>
 
         <section className="mx-auto max-w-[1400px] p-4 sm:p-6 lg:p-8">
-          {page !== 'settings' && (
+          {/* ── Initial-load skeleton ─────────────────────────────────────
+               Shown only on the very first load, while batches + profile are
+               being fetched. Replaced by real content once data arrives.
+               batchesLoading starts false and is set true immediately inside
+               loadBatches, so `batchesLoading && batches.length === 0` is a
+               reliable "first paint" gate. ──────────────────────────────── */}
+          {batchesLoading && batches.length === 0 && (
+            <div
+              className="space-y-6"
+              aria-busy="true"
+              aria-label="Loading dashboard…"
+            >
+              {/* Selector bar skeleton */}
+              <div className="flex flex-wrap gap-3">
+                {[1, 2, 3, 4].map((i) => (
+                  <div
+                    key={i}
+                    className="h-10 w-32 animate-pulse rounded-xl bg-gray-200 dark:bg-navy-700"
+                  />
+                ))}
+              </div>
+              {/* Stat cards skeleton */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <div
+                    key={i}
+                    className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-navy-700 dark:bg-navy-800"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-2">
+                        <div className="h-3 w-20 animate-pulse rounded bg-gray-200 dark:bg-navy-700" />
+                        <div className="h-7 w-14 animate-pulse rounded-lg bg-gray-200 dark:bg-navy-700" />
+                      </div>
+                      <div className="h-12 w-12 animate-pulse rounded-xl bg-gray-100 dark:bg-navy-700" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Table skeleton */}
+              <div className="rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-navy-700 dark:bg-navy-800">
+                <div className="border-b border-gray-100 p-5 dark:border-navy-700">
+                  <div className="h-5 w-40 animate-pulse rounded-lg bg-gray-200 dark:bg-navy-700" />
+                </div>
+                <div className="divide-y divide-gray-100 dark:divide-navy-700">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className="flex items-center gap-4 px-5 py-3">
+                      <div className="h-4 w-6 animate-pulse rounded bg-gray-200 dark:bg-navy-700" />
+                      <div className="h-4 flex-1 animate-pulse rounded bg-gray-100 dark:bg-navy-800" />
+                      <div className="h-4 w-16 animate-pulse rounded bg-gray-100 dark:bg-navy-800" />
+                      <div className="h-4 w-16 animate-pulse rounded bg-gray-100 dark:bg-navy-800" />
+                      <div className="h-4 w-12 animate-pulse rounded bg-gray-200 dark:bg-navy-700" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          {(!batchesLoading || batches.length > 0) && page !== 'settings' && page !== 'roster' && page !== 'assessments' && (
             <Selectors
               year={year}
               setYear={setYear}
@@ -643,6 +787,7 @@ export default function Home() {
               semesterOptions={semesterOptions}
             />
           )}
+          {(!batchesLoading || batches.length > 0) && (<>
           {page === 'dashboard' && (
             <Dashboard
               rows={rows}
@@ -654,6 +799,7 @@ export default function Home() {
               dark={dark}
               contactName={contactName}
               onUpload={() => setPage('upload')}
+              rosterStudents={rosterStudents}
             />
           )}
           {page === 'upload' && (
@@ -700,6 +846,25 @@ export default function Home() {
               onProcess={() => handleProcess(false)}
               saving={saving}
               saveError={saveError}
+              rosterWarnings={rosterWarnings}
+              onGoToRoster={() => setPage('roster')}
+            />
+          )}
+          {page === 'roster' && (
+            <RosterComponent
+              year={year}
+              grade={grade}
+              section={section}
+              onSaved={loadRoster}
+            />
+          )}
+          {page === 'assessments' && (
+            <AssessmentsComponent
+              year={year}
+              grade={grade}
+              section={section}
+              school={school}
+              periodSystem={periodSystem}
             />
           )}
           {page === 'students' && (
@@ -711,6 +876,7 @@ export default function Home() {
               grade={grade}
               section={section}
               year={year}
+              rosterStudents={rosterStudents}
               onReport={(r: Result) => {
                 setSelected(r);
                 setPage('reports');
@@ -742,6 +908,7 @@ export default function Home() {
               query={q}
               school={school}
               active={active}
+              periodSystem={periodSystem}
               onReport={(r: Result) => {
                 setSelected(r);
                 setPage('reports');
@@ -761,11 +928,16 @@ export default function Home() {
               semester={active?.semester || semester}
               active={active}
               batches={batches}
+              periodSystem={periodSystem}
             />
+          )}
+          {page === 'messages' && (
+            <TeacherMessages onCountChange={setUnreadMsgCount} />
           )}
           {page === 'settings' && (
             <Settings school={school} setSchool={setSchool} periodSystem={periodSystem} setPeriodSystem={setPeriodSystem} schoolCode={schoolCode} />
           )}
+          </>)}
         </section>
       </div>
 
@@ -1071,7 +1243,10 @@ function Dashboard({
   dark,
   contactName,
   onUpload,
+  rosterStudents,
 }: any) {
+  // Use result rows when available; fall back to roster size for the count
+  const studentCount = rows.length > 0 ? rows.length : (rosterStudents?.length ?? 0);
   const average = rows.length
     ? rows.reduce((s: number, r: Result) => s + r.percentage, 0) / rows.length
     : 0;
@@ -1136,8 +1311,8 @@ function Dashboard({
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         <Metric
           label="Total Students"
-          value={`${rows.length}`}
-          caption={`Enrolled in ${className}`}
+          value={`${studentCount}`}
+          caption={rows.length > 0 ? `Enrolled in ${className}` : `In roster for ${className}`}
           icon={MdPeopleAlt}
           iconClass="bg-purple-50 text-purple-600 dark:bg-navy-700 dark:text-purple-300"
         />
@@ -1308,6 +1483,8 @@ function Upload({
   onProcess,
   saving,
   saveError,
+  rosterWarnings,
+  onGoToRoster,
 }: any) {
   const activeStep = fileName ? (issues.length ? 2 : 3) : 0;
   return (
@@ -1597,6 +1774,28 @@ function Upload({
             <span>{saveError}</span>
           </div>
         )}
+        {/* Roster warnings — partial mismatches after a successful save */}
+        {rosterWarnings?.length > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 dark:border-amber-700/40 dark:bg-amber-900/20">
+            <p className="flex items-center gap-1.5 text-sm font-bold text-amber-800 dark:text-amber-300">
+              <MdWarningAmber className="shrink-0" />
+              Results saved — but {rosterWarnings.length} student ID{rosterWarnings.length !== 1 ? 's' : ''} {rosterWarnings.length !== 1 ? 'are' : 'is'} not in the class roster:
+            </p>
+            <ul className="mt-2 space-y-1 text-xs text-amber-700 dark:text-amber-400">
+              {rosterWarnings.map((w: string, i: number) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+            {onGoToRoster && (
+              <button
+                onClick={onGoToRoster}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-800 transition hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50"
+              >
+                Go to Class Roster →
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1604,14 +1803,14 @@ function Upload({
 
 /* ---------- Students ---------- */
 
-function Students({ rows, total, className, query, grade, section, year, onReport }: any) {
+function Students({ rows, total, className, query, grade, section, year, rosterStudents, onReport }: any) {
   // 1. School-wide pending portal requests — independent of all selectors
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
   const [pendingLoading, setPendingLoading]   = useState(false);
   const [actionBusy, setActionBusy]           = useState<string | null>(null);
 
   // 2. Per-class portal status map for badges on result-student cards
-  const [portalMap, setPortalMap] = useState<Record<string, { id: string; status: string }>>({});
+  const [portalMap, setPortalMap] = useState<Record<string, { id: string; status: string; parent_name?: string; parent_phone?: string }>>({});
 
   const loadPending = () => {
     setPendingLoading(true);
@@ -1627,8 +1826,8 @@ function Students({ rows, total, className, query, grade, section, year, onRepor
     fetch(`/api/students?grade=${encodeURIComponent(grade)}&section=${encodeURIComponent(section)}&academic_year=${encodeURIComponent(year)}`)
       .then(r => r.ok ? r.json() : { students: [] })
       .then(d => {
-        const map: Record<string, { id: string; status: string }> = {};
-        for (const s of d.students ?? []) map[s.student_code] = { id: s.id, status: s.portal_status };
+        const map: Record<string, { id: string; status: string; parent_name?: string; parent_phone?: string }> = {};
+        for (const s of d.students ?? []) map[s.student_code] = { id: s.id, status: s.portal_status, parent_name: s.parent_name ?? undefined, parent_phone: s.parent_phone ?? undefined };
         setPortalMap(map);
       })
       .catch(() => {});
@@ -1693,19 +1892,25 @@ function Students({ rows, total, className, query, grade, section, year, onRepor
                       {s.grade ? ` · ${s.grade}${s.section}` : ` · (grade not yet assigned)`}
                       {s.email ? ` · ${s.email}` : ``}
                     </p>
+                    {(s.parent_name || s.parent_phone) && (
+                      <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                        <span className="font-semibold text-gray-600 dark:text-gray-300">Parent: </span>
+                        {[s.parent_name, s.parent_phone].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
                   </div>
                   <div className="flex shrink-0 gap-2">
                     <button
                       disabled={actionBusy === s.id}
                       onClick={() => handleStatusChange(s.id, s.student_code, `active`)}
-                      className="rounded-xl bg-horizonGreen-500 px-4 py-2 text-xs font-bold text-white transition hover:bg-horizonGreen-600 disabled:opacity-50"
+                      className="rounded-xl bg-horizonGreen-500 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-horizonGreen-600 disabled:opacity-50"
                     >
                       {actionBusy === s.id ? `...` : `Approve`}
                     </button>
                     <button
                       disabled={actionBusy === s.id}
                       onClick={() => handleStatusChange(s.id, s.student_code, `rejected`)}
-                      className="rounded-xl border border-red-200 px-4 py-2 text-xs font-bold text-red-600 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-700/40 dark:hover:bg-red-900/20"
+                      className="rounded-xl border border-red-200 px-4 py-2.5 text-xs font-bold text-red-600 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-700/40 dark:hover:bg-red-900/20"
                     >
                       {actionBusy === s.id ? `...` : `Reject`}
                     </button>
@@ -1723,13 +1928,21 @@ function Students({ rows, total, className, query, grade, section, year, onRepor
             <h2 className="mt-1 text-2xl font-bold text-navy-900 dark:text-white">Students</h2>
           </div>
           <p className="text-sm text-gray-600 dark:text-gray-400">
-            {query ? `Showing ${rows.length} of ${total} students in ${className}` : `${rows.length} students in ${className}`}
+            {(() => {
+              const displayCount = rows.length > 0 ? rows.length : (rosterStudents?.length ?? 0);
+              const label = rows.length > 0 ? 'students in' : 'students in roster for';
+              return query
+                ? `Showing ${rows.length} of ${displayCount} ${label} ${className}`
+                : `${displayCount} ${label} ${className}`;
+            })()}
           </p>
         </div>
         {rows.length ? (
+          /* ── Result cards (batch data exists) ─────────────────────────── */
           <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
             {rows.map((r: Result) => {
               const badge = portalBadge(r.id);
+              const parentEntry = portalMap[r.id];
               return (
                 <Card key={r.id} className="p-5">
                   <div className="flex items-start justify-between gap-3">
@@ -1738,6 +1951,14 @@ function Students({ rows, total, className, query, grade, section, year, onRepor
                       <div className="min-w-0">
                         <p className="truncate font-bold text-navy-900 dark:text-white">{r.name}</p>
                         <p className="text-xs text-gray-600 dark:text-gray-400">{r.id} · {className}</p>
+                        {(parentEntry?.parent_name || parentEntry?.parent_phone) ? (
+                          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                            <span className="font-semibold">Parent: </span>
+                            {[parentEntry.parent_name, parentEntry.parent_phone].filter(Boolean).join(' · ')}
+                          </p>
+                        ) : parentEntry && (
+                          <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500 italic">Parent: Not provided</p>
+                        )}
                       </div>
                     </div>
                     <RankBadge rank={r.rank} />
@@ -1773,13 +1994,83 @@ function Students({ rows, total, className, query, grade, section, year, onRepor
               );
             })}
           </div>
+        ) : rosterStudents?.length ? (
+          /* ── Roster-only cards (roster uploaded, no results yet) ──────── */
+          <>
+            <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200">
+              <MdHourglassTop className="shrink-0 text-base" />
+              <span>
+                Showing roster — no results uploaded yet for {className}. Upload a result sheet to see scores and rankings.
+              </span>
+            </div>
+            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+              {(rosterStudents as any[])
+                .filter((s: any) => {
+                  if (!query) return true;
+                  const q2 = query.toLowerCase();
+                  return (
+                    (s.full_name   ?? '').toLowerCase().includes(q2) ||
+                    (s.student_code ?? '').toLowerCase().includes(q2)
+                  );
+                })
+                .map((s: any) => {
+                  const badge = portalBadge(s.student_code);
+                  const sexLabel = s.sex === 'M' ? 'Male' : s.sex === 'F' ? 'Female' : s.sex || '—';
+                  return (
+                    <Card key={s.id} className="p-5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Avatar name={s.full_name || s.student_code} className="h-12 w-12 text-base" />
+                          <div className="min-w-0">
+                            <p className="truncate font-bold text-navy-900 dark:text-white">{s.full_name || '(no name)'}</p>
+                            <p className="text-xs text-gray-600 dark:text-gray-400">
+                              {s.student_code}
+                              {s.roll_number ? ` · Roll ${s.roll_number}` : ''}
+                              {` · ${className}`}
+                            </p>
+                            {(s.parent_name || s.parent_phone) ? (
+                              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                                <span className="font-semibold">Parent: </span>
+                                {[s.parent_name, s.parent_phone].filter(Boolean).join(' · ')}
+                              </p>
+                            ) : (
+                              <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500 italic">Parent: Not provided</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div className="rounded-xl bg-lightPrimary px-3 py-2.5 dark:bg-navy-700/60">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Sex</p>
+                          <p className="mt-0.5 text-sm font-bold text-navy-900 dark:text-white">{sexLabel}</p>
+                        </div>
+                        <div className="rounded-xl bg-lightPrimary px-3 py-2.5 dark:bg-navy-700/60">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Results</p>
+                          <p className="mt-0.5 text-sm font-bold text-amber-500">Not uploaded</p>
+                        </div>
+                      </div>
+                      {badge && (
+                        <div className="mt-3">
+                          <span className={`inline-flex items-center rounded-xl px-3 py-2 text-xs font-bold ${badge.cls}`}>
+                            {badge.label}
+                          </span>
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
+            </div>
+          </>
         ) : (
+          /* ── True empty state (no roster, no results) ─────────────────── */
           <Card className="p-12 text-center">
             <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-brand-50 text-2xl text-brand-500 dark:bg-navy-700">
               <MdGroups />
             </div>
-            <p className="mt-4 font-bold text-navy-900 dark:text-white">No results for this selection.</p>
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Upload a result sheet or change the selectors above.</p>
+            <p className="mt-4 font-bold text-navy-900 dark:text-white">No students found for this class.</p>
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+              Add students via <strong>Class Roster</strong>, then upload a result sheet to see scores.
+            </p>
           </Card>
         )}
       </div>
@@ -1881,7 +2172,7 @@ function Classes({ batches, grade, section, onLoad, onUpload }: any) {
                   })}
                 </div>
               </div>
-              <div className="mt-5 grid grid-cols-3 gap-3">
+              <div className="mt-5 grid grid-cols-3 gap-2 sm:gap-3">
                 {[
                   { label: 'Students', value: `${totalStudents}` },
                   { label: 'Batches', value: `${bs.length}` },
@@ -1982,6 +2273,7 @@ function Rankings({
   query,
   school,
   active,
+  periodSystem,
   onReport,
 }: any) {
   const [mode, setMode] = useState<'section' | 'grade'>('section');
@@ -2176,7 +2468,7 @@ function Rankings({
           <button
             onClick={async () => {
               const { generateRankingDoc } = await import('lib/docx/generators');
-              await generateRankingDoc({ rows: list, school, year, grade, section, semester, mode });
+              await generateRankingDoc({ rows: list, school, year, grade, section, semester, periodSystem, mode });
             }}
             className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-bold text-navy-900 transition hover:bg-lightPrimary sm:self-auto dark:border-navy-600 dark:text-white dark:hover:bg-navy-700"
           >
@@ -2357,7 +2649,7 @@ function Rankings({
               </div>
               <RankBadge rank={r.rank} />
             </div>
-            <div className="mt-4 grid grid-cols-4 gap-2 text-sm">
+            <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
               <div className="rounded-xl bg-lightPrimary px-3 py-2 dark:bg-navy-700/60">
                 {r.total}/{r.maximum}
                 <small className="block text-[10px] uppercase text-gray-500 dark:text-gray-400">
@@ -2505,11 +2797,28 @@ function Reports({
   semester,
   active,
   batches,
+  periodSystem,
 }: any) {
   const student =
     selected && rows.some((r: Result) => r.id === selected.id)
       ? rows.find((r: Result) => r.id === selected.id)!
       : rows[0];
+
+  // ── Parent contact: fetch for the selected student whenever they change ──
+  const [parentData, setParentData] = useState<{ parent_name?: string; parent_phone?: string } | null>(null);
+  useEffect(() => {
+    if (!student?.id || !grade || !section || !year) return;
+    let cancelled = false;
+    fetch(`/api/students?grade=${encodeURIComponent(grade)}&section=${encodeURIComponent(section)}&academic_year=${encodeURIComponent(year)}`)
+      .then(r => r.ok ? r.json() : { students: [] })
+      .then(d => {
+        if (cancelled) return;
+        const found = (d.students ?? []).find((s: any) => s.student_code === student.id);
+        setParentData(found ? { parent_name: found.parent_name ?? undefined, parent_phone: found.parent_phone ?? undefined } : null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [student?.id, grade, section, year]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!student)
     return (
       <Card className="p-12 text-center">
@@ -2526,7 +2835,7 @@ function Reports({
     );
   return (
     <div className="space-y-5">
-      <div className="no-print flex flex-col gap-4 rounded-[20px] border border-gray-200/70 bg-white p-5 shadow-[0_18px_40px_rgba(112,144,176,0.12)] sm:flex-row sm:items-end dark:border-navy-700 dark:bg-navy-800">
+      <div className="no-print flex flex-col flex-wrap gap-4 rounded-[20px] border border-gray-200/70 bg-white p-5 shadow-[0_18px_40px_rgba(112,144,176,0.12)] sm:flex-row sm:items-end dark:border-navy-700 dark:bg-navy-800">
         <label className="flex-1">
           <span className="text-xs font-bold uppercase tracking-wide text-gray-600 dark:text-gray-400">
             Select student
@@ -2548,18 +2857,19 @@ function Reports({
         <button
           onClick={async () => {
             const { generateStudentReportDoc } = await import('lib/docx/generators');
-            // For Full Year, find raw S1/S2 scores
-            let s1Scores: Record<string, string | number> | undefined;
-            let s2Scores: Record<string, string | number> | undefined;
+            // For Full Year, build periodScores array from actual period batches
+            let periodScores: Array<{ periodLabel: string; scores: Record<string, string | number> }> | undefined;
             if (semester === 'Full Year' && batches) {
-              const s1b = batches.find((b: any) => b.year === year && b.className === `${grade}${section}` && b.semester === 'Semester 1');
-              const s2b = batches.find((b: any) => b.year === year && b.className === `${grade}${section}` && b.semester === 'Semester 2');
-              const s1row = s1b?.rows?.find((r: any) => r.id === student.id);
-              const s2row = s2b?.rows?.find((r: any) => r.id === student.id);
-              if (s1row) s1Scores = s1row.scores;
-              if (s2row) s2Scores = s2row.scores;
+              const periodLabels = periodSystem === 'quarter'
+                ? ['Quarter 1', 'Quarter 2', 'Quarter 3', 'Quarter 4']
+                : ['Semester 1', 'Semester 2'];
+              periodScores = periodLabels.flatMap((label) => {
+                const b = batches.find((b: any) => b.year === year && b.className === `${grade}${section}` && b.semester === label);
+                const row = b?.rows?.find((r: any) => r.id === student.id);
+                return row ? [{ periodLabel: label, scores: row.scores }] : [];
+              });
             }
-            await generateStudentReportDoc({ student, subjects, school, year, grade, section, semester, s1Scores, s2Scores });
+            await generateStudentReportDoc({ student, subjects, school, year, grade, section, semester, periodSystem, periodScores });
           }}
           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-brand-500 to-blueSecondary px-5 py-3 text-sm font-bold text-white shadow-[0_8px_20px_rgba(67,24,255,0.3)] transition hover:opacity-90"
         >
@@ -2568,7 +2878,7 @@ function Reports({
         <button
           onClick={async () => {
             const { generateClassReportDoc } = await import('lib/docx/generators');
-            await generateClassReportDoc({ rows, subjects, school, year, grade, section, semester });
+            await generateClassReportDoc({ rows, subjects, school, year, grade, section, semester, periodSystem });
           }}
           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-gray-200 px-5 py-3 text-sm font-bold text-navy-900 transition hover:bg-lightPrimary dark:border-navy-600 dark:text-white dark:hover:bg-navy-700"
         >
@@ -2578,10 +2888,15 @@ function Reports({
           <button
             onClick={async () => {
               const { generateFinalResultDoc } = await import('lib/docx/generators');
-              const s1b = batches.find((b: any) => b.year === year && b.className === `${grade}${section}` && b.semester === 'Semester 1');
-              const s2b = batches.find((b: any) => b.year === year && b.className === `${grade}${section}` && b.semester === 'Semester 2');
-              if (s1b && s2b) {
-                await generateFinalResultDoc({ rows, s1Rows: s1b.rows, s2Rows: s2b.rows, subjects, school, year, grade, section });
+              const periodLabels = periodSystem === 'quarter'
+                ? ['Quarter 1', 'Quarter 2', 'Quarter 3', 'Quarter 4']
+                : ['Semester 1', 'Semester 2'];
+              const periods = periodLabels.flatMap((label) => {
+                const b = batches.find((b: any) => b.year === year && b.className === `${grade}${section}` && b.semester === label);
+                return b ? [{ periodLabel: label, rows: b.rows }] : [];
+              });
+              if (periods.length === periodLabels.length) {
+                await generateFinalResultDoc({ rows, periods, subjects, school, year, grade, section, periodSystem });
               }
             }}
             className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-gray-200 px-5 py-3 text-sm font-bold text-navy-900 transition hover:bg-lightPrimary dark:border-navy-600 dark:text-white dark:hover:bg-navy-700"
@@ -2590,6 +2905,35 @@ function Reports({
           </button>
         )}
       </div>
+      {/* ── Emergency Contact ────────────────────────────────────────────── */}
+      {(() => {
+        const hasContact = parentData?.parent_name || parentData?.parent_phone;
+        return (
+          <div className="no-print rounded-2xl border border-gray-200/70 bg-white px-5 py-4 shadow-[0_4px_16px_rgba(112,144,176,0.08)] dark:border-navy-700 dark:bg-navy-800">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-gray-400 dark:text-gray-500">Emergency Contact</p>
+            {hasContact ? (
+              <div className="flex flex-wrap gap-x-8 gap-y-1 text-sm">
+                {parentData?.parent_name && (
+                  <p>
+                    <span className="font-semibold text-gray-500 dark:text-gray-400">Parent / Guardian: </span>
+                    <span className="font-bold text-navy-900 dark:text-white">{parentData.parent_name}</span>
+                  </p>
+                )}
+                {parentData?.parent_phone && (
+                  <p>
+                    <span className="font-semibold text-gray-500 dark:text-gray-400">Phone: </span>
+                    <span className="font-bold text-navy-900 dark:text-white">{parentData.parent_phone}</span>
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm italic text-gray-400 dark:text-gray-500">
+                {parentData === null ? 'No portal account — parent contact not available.' : 'Not provided — student has not entered parent contact details.'}
+              </p>
+            )}
+          </div>
+        );
+      })()}
       <Report
         student={student}
         subjects={subjects}
@@ -2766,6 +3110,533 @@ function Settings({ school, setSchool, periodSystem, setPeriodSystem, schoolCode
         </p>
         <GeminiKeyField />
       </Card>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TeacherMessages — full message management page embedded in the teacher SPA.
+
+   Layout:
+     Left panel  — filterable message list (status + category tabs)
+     Right panel — selected thread detail with reply box + status actions
+
+   On mount:
+     • Loads the message list via GET /api/messages
+     • Refreshes the unread notification count via onCountChange callback so the
+       bell badge stays accurate after the teacher reads new messages here.
+
+   Notification count refresh:
+     Calls onCountChange(0) immediately on mount (teacher is "looking at" the
+     messages page so the badge clears). A real re-fetch happens on mount too.
+─────────────────────────────────────────────────────────────────────────────── */
+
+type MsgStatus   = 'pending' | 'resolved' | 'archived';
+type MsgCategory = 'complaint' | 'recommendation' | 'question' | 'other';
+
+interface MsgListItem {
+  id:          string;
+  category:    MsgCategory;
+  message:     string;
+  status:      MsgStatus;
+  created_at:  string;
+  updated_at:  string;
+  reply_count: number;
+  student:     { full_name: string; student_code: string; grade: string; section: string } | null;
+}
+
+interface MsgReply {
+  id:          string;
+  sender_type: 'teacher' | 'student';
+  reply_text:  string;
+  created_at:  string;
+}
+
+interface MsgThread {
+  id:         string;
+  category:   MsgCategory;
+  message:    string;
+  status:     MsgStatus;
+  created_at: string;
+  updated_at: string;
+  student:    MsgListItem['student'];
+  replies:    MsgReply[];
+}
+
+const MSG_STATUS_CFG: Record<MsgStatus, { label: string; cls: string }> = {
+  pending:  { label: 'Pending',  cls: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300' },
+  resolved: { label: 'Resolved', cls: 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300' },
+  archived: { label: 'Archived', cls: 'bg-gray-100 text-gray-500 dark:bg-navy-700 dark:text-gray-400' },
+};
+
+const MSG_CATEGORY_CFG: Record<MsgCategory, { label: string; cls: string }> = {
+  complaint:      { label: 'Complaint',      cls: 'bg-rose-50 text-rose-700 dark:bg-rose-900/20 dark:text-rose-300' },
+  recommendation: { label: 'Recommendation', cls: 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300' },
+  question:       { label: 'Question',       cls: 'bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-300' },
+  other:          { label: 'Other',          cls: 'bg-gray-100 text-gray-600 dark:bg-navy-700 dark:text-gray-400' },
+};
+
+function msgFormatDate(iso: string) {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    }).format(new Date(iso));
+  } catch { return iso; }
+}
+
+function msgTimeAgo(iso: string) {
+  try {
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60_000);
+    if (mins < 1)  return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24)  return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  } catch { return ''; }
+}
+
+function TeacherMessages({ onCountChange }: { onCountChange: (n: number) => void }) {
+  const [messages,       setMessages]       = useState<MsgListItem[]>([]);
+  const [loading,        setLoading]        = useState(true);
+  const [error,          setError]          = useState('');
+  const [statusFilter,   setStatusFilter]   = useState<MsgStatus | 'all'>('all');
+  const [categoryFilter, setCategoryFilter] = useState<MsgCategory | 'all'>('all');
+  const [selectedId,     setSelectedId]     = useState<string | null>(null);
+  const [thread,         setThread]         = useState<MsgThread | null>(null);
+  const [threadLoading,  setThreadLoading]  = useState(false);
+  const [replyText,      setReplyText]      = useState('');
+  const [replying,       setReplying]       = useState(false);
+  const [replyError,     setReplyError]     = useState('');
+  // Mobile: show either the list or the thread panel (lg+ shows both side-by-side)
+  const [mobileView,     setMobileView]     = useState<'list' | 'thread'>('list');
+
+  // Load messages + clear bell badge on mount
+  const loadMessages = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ limit: '100' });
+      if (statusFilter   !== 'all') params.set('status',   statusFilter);
+      if (categoryFilter !== 'all') params.set('category', categoryFilter);
+      const res = await fetch(`/api/messages?${params}`);
+      if (!res.ok) throw new Error('Failed to load messages');
+      const d = await res.json();
+      setMessages(d.messages ?? []);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [statusFilter, categoryFilter]);
+
+  useEffect(() => {
+    loadMessages();
+    // When the teacher opens the Messages page, mark all student_message
+    // notifications as read (they are now viewing the inbox) and sync the badge.
+    fetch('/api/notifications', {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ mark_all_read: true }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(() => {
+        // After marking all read, re-fetch the true unread count
+        return fetch('/api/notifications?limit=1&unread=true')
+          .then(r => r.ok ? r.json() : null)
+          .then(d => { if (d) onCountChange(d.unread_count ?? 0); });
+      })
+      .catch(() => {});
+  }, [loadMessages]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load thread when selection changes
+  const loadThread = useCallback(async (id: string) => {
+    setThreadLoading(true);
+    setThread(null);
+    setReplyText('');
+    setReplyError('');
+    try {
+      const res = await fetch(`/api/messages/${id}`);
+      if (!res.ok) throw new Error('Failed to load thread');
+      const d = await res.json();
+      setThread(d.thread);
+    } catch (e: any) {
+      setReplyError(e.message);
+    } finally {
+      setThreadLoading(false);
+    }
+  }, []);
+
+  const handleSelect = (id: string) => {
+    setSelectedId(id);
+    loadThread(id);
+    setMobileView('thread');  // on mobile, switch to thread view
+  };
+
+  // Status update
+  const handleStatusChange = async (newStatus: MsgStatus) => {
+    if (!selectedId || !thread) return;
+    try {
+      const res = await fetch(`/api/messages/${selectedId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) throw new Error('Failed to update status');
+      setThread(t => t ? { ...t, status: newStatus } : t);
+      setMessages(prev => prev.map(m =>
+        m.id === selectedId ? { ...m, status: newStatus } : m
+      ));
+    } catch (e: any) {
+      setReplyError(e.message);
+    }
+  };
+
+  // Reply
+  const handleReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedId || !replyText.trim()) return;
+    setReplying(true);
+    setReplyError('');
+    try {
+      const res = await fetch(`/api/messages/${selectedId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ reply_text: replyText.trim() }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error ?? 'Failed to send reply');
+      }
+      const d = await res.json();
+      setThread(t => t ? { ...t, replies: [...t.replies, d.reply] } : t);
+      setMessages(prev => prev.map(m =>
+        m.id === selectedId ? { ...m, reply_count: m.reply_count + 1 } : m
+      ));
+      setReplyText('');
+    } catch (e: any) {
+      setReplyError(e.message);
+    } finally {
+      setReplying(false);
+    }
+  };
+
+  const filtered = messages; // server already filters; kept for future client-side use
+
+  return (
+    <div className="flex h-[calc(100vh-160px)] min-h-[500px] gap-4 overflow-hidden">
+
+      {/* ── Left panel: message list ─────────────────────────────────────── */}
+      {/* On mobile: hidden when a thread is open; visible otherwise.
+          On lg+: always visible at a fixed 380px width. */}
+      <div className={`flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-navy-700 dark:bg-navy-800 lg:w-[380px] lg:shrink-0 lg:flex ${mobileView === 'list' ? 'w-full' : 'hidden lg:flex'}`}>
+
+        {/* Filter bar */}
+        <div className="border-b border-gray-100 p-4 dark:border-navy-700">
+          <h2 className="mb-3 text-base font-bold text-navy-900 dark:text-white">Messages</h2>
+          <div className="flex flex-wrap gap-2">
+            {/* Status filter */}
+            {(['all', 'pending', 'resolved', 'archived'] as const).map(s => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                  statusFilter === s
+                    ? 'bg-brand-500 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-navy-700 dark:text-gray-400 dark:hover:bg-navy-600'
+                }`}
+              >
+                {s === 'all' ? 'All' : MSG_STATUS_CFG[s].label}
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {/* Category filter */}
+            {(['all', 'complaint', 'recommendation', 'question', 'other'] as const).map(c => (
+              <button
+                key={c}
+                onClick={() => setCategoryFilter(c)}
+                className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                  categoryFilter === c
+                    ? 'bg-navy-700 text-white dark:bg-navy-600'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-navy-700 dark:text-gray-500 dark:hover:bg-navy-600'
+                }`}
+              >
+                {c === 'all' ? 'All types' : MSG_CATEGORY_CFG[c].label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="space-y-0 divide-y divide-gray-100 dark:divide-navy-700">
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} className="p-4">
+                  <div className="flex gap-2">
+                    <div className="h-4 w-16 animate-pulse rounded-full bg-gray-200 dark:bg-navy-700" />
+                    <div className="h-4 w-12 animate-pulse rounded-full bg-gray-100 dark:bg-navy-800" />
+                  </div>
+                  <div className="mt-2 h-3.5 w-full animate-pulse rounded bg-gray-100 dark:bg-navy-800" />
+                  <div className="mt-1.5 h-3 w-24 animate-pulse rounded bg-gray-100 dark:bg-navy-800" />
+                </div>
+              ))}
+            </div>
+          ) : error ? (
+            <p className="p-6 text-center text-sm text-red-500">{error}</p>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-3 p-10 text-center">
+              <MdMessage className="text-4xl text-gray-300 dark:text-gray-600" />
+              <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
+                No messages
+              </p>
+              <p className="text-xs text-gray-400 dark:text-gray-500">
+                Messages from students will appear here.
+              </p>
+            </div>
+          ) : (
+            <ul className="divide-y divide-gray-100 dark:divide-navy-700">
+              {filtered.map(m => {
+                const statusCfg   = MSG_STATUS_CFG[m.status];
+                const categoryCfg = MSG_CATEGORY_CFG[m.category];
+                const isSelected  = m.id === selectedId;
+
+                return (
+                  <li key={m.id}>
+                    <button
+                      onClick={() => handleSelect(m.id)}
+                      className={`w-full p-4 text-left transition ${
+                        isSelected
+                          ? 'bg-brand-50 dark:bg-brand-900/10'
+                          : 'hover:bg-gray-50 dark:hover:bg-navy-700/50'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${categoryCfg.cls}`}>
+                          {categoryCfg.label}
+                        </span>
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusCfg.cls}`}>
+                          {statusCfg.label}
+                        </span>
+                        {m.reply_count > 0 && (
+                          <span className="text-[11px] text-gray-400 dark:text-gray-500">
+                            {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1.5 line-clamp-2 text-xs text-navy-700 dark:text-gray-300">
+                        {m.message}
+                      </p>
+                      <div className="mt-1.5 flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400">
+                          {m.student?.full_name ?? 'Unknown student'}
+                          {m.student ? ` · Grade ${m.student.grade}${m.student.section}` : ''}
+                        </span>
+                        <span className="text-[11px] text-gray-400 dark:text-gray-500">
+                          {msgTimeAgo(m.created_at)}
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {/* ── Right panel: thread detail ───────────────────────────────────── */}
+      {/* On mobile: shown when mobileView === 'thread', hidden otherwise.
+          On lg+: always visible alongside the list. */}
+      <div className={`flex-1 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-navy-700 dark:bg-navy-800 ${mobileView === 'thread' ? 'flex' : 'hidden lg:flex'}`}>
+        {!selectedId ? (
+          /* Empty state — only visible on lg+ since mobile starts on list view */
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
+            <MdMessage className="text-5xl text-gray-200 dark:text-gray-600" />
+            <p className="text-base font-bold text-gray-400 dark:text-gray-500">
+              Select a message to view the thread
+            </p>
+          </div>
+        ) : threadLoading ? (
+          /* Loading skeleton */
+          <div className="flex flex-1 flex-col gap-4 p-6">
+            {/* Mobile back button */}
+            <button
+              onClick={() => setMobileView('list')}
+              className="flex items-center gap-1.5 self-start text-sm font-semibold text-brand-500 hover:underline lg:hidden"
+            >
+              <MdArrowBack size={18} /> Back to messages
+            </button>
+            <div className="flex gap-2">
+              <div className="h-5 w-20 animate-pulse rounded-full bg-gray-200 dark:bg-navy-700" />
+              <div className="h-5 w-16 animate-pulse rounded-full bg-gray-100 dark:bg-navy-800" />
+            </div>
+            {[1, 2, 3].map(i => (
+              <div key={i} className="flex gap-3">
+                <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-gray-200 dark:bg-navy-700" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-3 w-1/4 animate-pulse rounded bg-gray-200 dark:bg-navy-700" />
+                  <div className="h-3 w-full animate-pulse rounded bg-gray-100 dark:bg-navy-800" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : thread ? (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            {/* Thread header */}
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 p-4 dark:border-navy-700 sm:p-5">
+              <div className="flex items-start gap-3">
+                {/* Mobile back button */}
+                <button
+                  onClick={() => setMobileView('list')}
+                  className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-navy-700 lg:hidden"
+                  aria-label="Back to messages"
+                >
+                  <MdArrowBack size={18} />
+                </button>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-bold ${MSG_CATEGORY_CFG[thread.category].cls}`}>
+                      {MSG_CATEGORY_CFG[thread.category].label}
+                    </span>
+                    <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${MSG_STATUS_CFG[thread.status].cls}`}>
+                      {MSG_STATUS_CFG[thread.status].label}
+                    </span>
+                  </div>
+                  {thread.student && (
+                    <p className="mt-1.5 text-sm font-semibold text-navy-700 dark:text-white">
+                      {thread.student.full_name}
+                      <span className="ml-2 font-normal text-gray-500 dark:text-gray-400">
+                        Grade {thread.student.grade}{thread.student.section} · {thread.student.student_code}
+                      </span>
+                    </p>
+                  )}
+                  <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                    {msgFormatDate(thread.created_at)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Status action buttons */}
+              <div className="flex flex-wrap gap-2">
+                {thread.status !== 'pending' && (
+                  <button
+                    onClick={() => handleStatusChange('pending')}
+                    className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 transition hover:bg-amber-100 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-300"
+                  >
+                    Mark Pending
+                  </button>
+                )}
+                {thread.status !== 'resolved' && (
+                  <button
+                    onClick={() => handleStatusChange('resolved')}
+                    className="rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-xs font-bold text-green-700 transition hover:bg-green-100 dark:border-green-700/40 dark:bg-green-900/20 dark:text-green-300"
+                  >
+                    Mark Resolved
+                  </button>
+                )}
+                {thread.status !== 'archived' && (
+                  <button
+                    onClick={() => handleStatusChange('archived')}
+                    className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-bold text-gray-500 transition hover:bg-gray-100 dark:border-navy-600 dark:bg-navy-700 dark:text-gray-400"
+                  >
+                    Archive
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Messages + replies */}
+            <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
+              {/* Original message */}
+              <div className="flex gap-3">
+                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-100 text-sm font-bold text-brand-600 dark:bg-brand-900/30 dark:text-brand-300">
+                  {thread.student?.full_name?.charAt(0).toUpperCase() ?? '?'}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-bold text-navy-700 dark:text-white">
+                    {thread.student?.full_name ?? 'Student'}
+                  </p>
+                  <div className="mt-1 rounded-2xl rounded-tl-none bg-gray-50 px-4 py-3 dark:bg-navy-700/60">
+                    <p className="whitespace-pre-wrap text-sm text-navy-700 dark:text-gray-200">
+                      {thread.message}
+                    </p>
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
+                    {msgFormatDate(thread.created_at)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Replies */}
+              {thread.replies.map(r => {
+                const isTeacher = r.sender_type === 'teacher';
+                return (
+                  <div key={r.id} className={`flex gap-3 ${isTeacher ? 'flex-row-reverse' : ''}`}>
+                    <div className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold ${
+                      isTeacher
+                        ? 'bg-brand-500 text-white'
+                        : 'bg-gray-200 text-gray-600 dark:bg-navy-700 dark:text-gray-300'
+                    }`}>
+                      {isTeacher ? 'T' : thread.student?.full_name?.charAt(0).toUpperCase() ?? 'S'}
+                    </div>
+                    <div className={`min-w-0 flex-1 ${isTeacher ? 'flex flex-col items-end' : ''}`}>
+                      <p className="text-xs font-bold text-navy-700 dark:text-white">
+                        {isTeacher ? 'You (Teacher)' : thread.student?.full_name ?? 'Student'}
+                      </p>
+                      <div className={`mt-1 inline-block max-w-[90%] rounded-2xl px-4 py-3 ${
+                        isTeacher
+                          ? 'rounded-tr-none bg-brand-50 dark:bg-brand-900/20'
+                          : 'rounded-tl-none bg-gray-50 dark:bg-navy-700/60'
+                      }`}>
+                        <p className="whitespace-pre-wrap text-sm text-navy-700 dark:text-gray-200">
+                          {r.reply_text}
+                        </p>
+                      </div>
+                      <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
+                        {msgFormatDate(r.created_at)}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Reply box */}
+            {thread.status !== 'archived' ? (
+              <form onSubmit={handleReply} className="border-t border-gray-100 p-4 dark:border-navy-700">
+                {replyError && (
+                  <p className="mb-2 text-xs text-red-500">{replyError}</p>
+                )}
+                <div className="flex gap-3">
+                  <textarea
+                    value={replyText}
+                    onChange={e => setReplyText(e.target.value)}
+                    rows={2}
+                    maxLength={2000}
+                    placeholder="Write a reply…"
+                    className="flex-1 resize-none rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-navy-900 outline-none placeholder:text-gray-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 dark:border-navy-600 dark:bg-navy-700 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-brand-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={replying || !replyText.trim()}
+                    className="grid h-11 w-11 shrink-0 place-items-center self-end rounded-xl bg-brand-500 text-white shadow transition hover:bg-brand-600 disabled:opacity-50"
+                    aria-label="Send reply"
+                  >
+                    <MdSend className="text-base" />
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <p className="border-t border-gray-100 p-4 text-center text-xs text-gray-400 dark:border-navy-700 dark:text-gray-500">
+                This thread is archived. Unarchive it to reply.
+              </p>
+            )}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

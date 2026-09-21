@@ -146,43 +146,76 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to save batch' }, { status: 500 });
   }
 
-  // ── Upsert canonical students + insert result_students ───────────────────
-  // Step A: upsert into public.students (one row per student_code per school).
-  // This is a background sync step — it never blocks or changes the visible
-  // upload flow. Uses the service client to bypass RLS (teacher inserts via
-  // anon client would also work, but service client is simpler here).
+  // ── Match result rows against the class roster ────────────────────────────
+  //
+  // Phase 5: the old canonicalUpserts auto-creation path has been REMOVED.
+  // Students must already exist in the roster (public.students) for this
+  // exact (school_id, grade, section) combination before a result batch can
+  // reference them. This prevents cross-class identity leakage.
+  //
+  // For each result row we look up the existing students row by
+  // (school_id, student_code). If found AND the row's grade+section matches
+  // the batch being saved, we set student_ref_id. If NOT found, we record a
+  // warning. Warnings do NOT block the save — the result row is still inserted
+  // with student_ref_id = null (same as before), so the teacher's data is
+  // never lost. The warning is returned in the response so the frontend can
+  // surface it without failing the whole operation.
+  //
+  // If EVERY row is unmatched (the roster hasn't been uploaded yet), we
+  // return a hard error prompting the teacher to set up the roster first.
+  // This threshold keeps the old "upload results before roster" schools
+  // working while nudging new schools toward the correct workflow.
   const service = createServiceClient();
 
-  const canonicalUpserts = computed.map((r) => ({
-    school_id:     userId,
-    student_code:  r.id  || '',
-    full_name:     r.name || '',
-    grade,
-    section,
-    academic_year: year,
-  }));
-
-  // upsert: on conflict(school_id, student_code) update name/grade/section/year
-  const { data: upsertedStudents, error: upsertErr } = await (service as any)
+  // Fetch all existing roster rows for this exact class in one query.
+  const resultCodes = computed.map((r) => r.id || '').filter(Boolean);
+  const { data: rosterRows } = await (service as any)
     .from('students')
-    .upsert(canonicalUpserts, {
-      onConflict:        'school_id,student_code',
-      ignoreDuplicates:  false,
-    })
-    .select('id, student_code');
+    .select('id, student_code, grade, section')
+    .eq('school_id', userId)
+    .in('student_code', resultCodes) as { data: Array<{ id: string; student_code: string; grade: string; section: string }> | null };
 
-  if (upsertErr) {
-    // Non-fatal: log but do not block the save — existing behaviour is preserved
-    console.error('[batches POST] canonical student upsert:', upsertErr.message);
-  }
-
-  // Build a code→canonical_id map so we can set student_ref_id below
+  // Build code → canonical UUID map, only for rows whose grade+section match.
   const codeToRefId = new Map<string, string>();
-  if (upsertedStudents) {
-    for (const s of upsertedStudents as { id: string; student_code: string }[]) {
-      codeToRefId.set(s.student_code, s.id);
+  if (rosterRows) {
+    for (const s of rosterRows) {
+      // Exact match on grade AND section: prevents linking a Grade 8A result
+      // row to a Grade 8B roster entry that happens to share the same code.
+      if (s.grade.trim() === grade.trim() && s.section.trim() === section.trim()) {
+        codeToRefId.set(s.student_code, s.id);
+      }
     }
   }
+
+  // Identify unmatched student codes
+  const unmatchedCodes = computed
+    .map((r) => r.id || '')
+    .filter((code) => code && !codeToRefId.has(code));
+
+  // Hard block only when zero rows matched — this indicates the roster has
+  // not been set up at all.  A partial mismatch (some matched, some not) is
+  // allowed with a warning so that OCR typos don't block the whole upload.
+  if (unmatchedCodes.length === computed.length) {
+    // Roll back the batch row
+    await supabase.from('result_batches').delete().eq('id', batch.id);
+    return NextResponse.json(
+      {
+        error:
+          `No students in this result sheet are in the class roster for ${grade}${section}. ` +
+          `Go to Class Roster → ${grade} ${section} and add these students first, ` +
+          `then re-upload the result sheet.`,
+        unmatched_codes: unmatchedCodes.slice(0, 10),
+      },
+      { status: 422 }
+    );
+  }
+
+  // Build per-row roster warnings for partial mismatches
+  const rosterWarnings: string[] = unmatchedCodes.map(
+    (code) =>
+      `Student ID "${code}" was not found in the class roster for ${grade}${section} — ` +
+      `add them to the roster, or check for a typo.`
+  );
 
   // Step B: insert result_students with student_ref_id set where available
   const studentRows = computed.map((r) => ({
@@ -215,7 +248,11 @@ export async function POST(request: NextRequest) {
     .eq('id', batch.id)
     .single();
 
-  return NextResponse.json({ batch: shapeBatch(full) }, { status: 201 });
+  // Return the shaped batch plus any roster warnings so the frontend can
+  // display them as an amber notice without treating the save as a failure.
+  const response: any = { batch: shapeBatch(full) };
+  if (rosterWarnings.length) response.roster_warnings = rosterWarnings;
+  return NextResponse.json(response, { status: 201 });
 }
 
 // ── Shared shaper ──────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from 'lib/supabase/server';
+import { createServiceClient } from 'lib/supabase/service';
 import { computeResults } from 'lib/grades';
 import { requireApproved } from 'lib/supabase/requireApproved';
 
@@ -120,6 +121,25 @@ export async function PATCH(
       console.error('[batches PATCH publish]', updateErr.message);
       return NextResponse.json({ error: 'Failed to update publish status' }, { status: 500 });
     }
+
+    // ── Notification creation (publish only, not draft/archive) ──────────
+    // We only create notifications when actually publishing, never on status
+    // rollbacks to draft/processed/etc.
+    if (publish_status === 'published') {
+      try {
+        await createResultPublishNotifications({
+          batchId:               id,
+          schoolId:              userId,
+          publishedStudentIds:   update.published_student_ids as string[],
+          batch,
+        });
+      } catch (notifErr) {
+        // Notification failure must never roll back a successful publish.
+        // Log and continue — the teacher's publish already succeeded.
+        console.error('[batches PATCH] notification creation failed (non-fatal):', notifErr);
+      }
+    }
+
     return NextResponse.json({ ok: true, publish_status, published_student_ids: update.published_student_ids ?? batch.published_student_ids });
   }
 
@@ -181,4 +201,88 @@ export async function PATCH(
   }
 
   return NextResponse.json({ error: 'No valid operation in body' }, { status: 400 });
+}
+
+// ── Notification helper ───────────────────────────────────────────────────────
+/**
+ * Creates one notification per student who was actually published in this
+ * batch publish action.
+ *
+ * published_student_ids semantics (from the batch update):
+ *   []          → "publish all" — every student in the batch was published
+ *   [id, id...] → selective — only the students whose student_code is in this
+ *                 list were published
+ *
+ * We use the service client so the insert bypasses RLS (notifications have no
+ * INSERT policy for anyone — only the server may create them).
+ */
+async function createResultPublishNotifications({
+  batchId,
+  schoolId,
+  publishedStudentIds,
+  batch,
+}: {
+  batchId:             string;
+  schoolId:            string;
+  publishedStudentIds: string[];   // student_code values, or [] for "all"
+  batch:               { subjects: any; [k: string]: any };
+}) {
+  const service = createServiceClient();
+
+  // Load all result_students for this batch that have a student_ref_id set,
+  // joined to their canonical students row so we get the student UUID.
+  // We need student_ref_id (students.id) to write recipient_student_id.
+  const { data: resultStudents, error: rsErr } = await (service as any)
+    .from('result_students')
+    .select('student_id, student_ref_id')   // student_id = student_code; student_ref_id = students.id
+    .eq('batch_id', batchId)
+    .not('student_ref_id', 'is', null);
+
+  if (rsErr || !resultStudents || resultStudents.length === 0) {
+    // No matched roster rows — nothing to notify
+    return;
+  }
+
+  // Determine which rows were actually published
+  const isPublishAll = publishedStudentIds.length === 0;
+  const publishedSet = new Set(publishedStudentIds);   // student_code values
+
+  const targetRows: Array<{ student_ref_id: string }> = (resultStudents as any[]).filter(
+    (r) => isPublishAll || publishedSet.has(r.student_id)
+  );
+
+  if (targetRows.length === 0) return;
+
+  // Load the batch metadata once for the notification body
+  const { data: batchMeta } = await (service as any)
+    .from('result_batches')
+    .select('semester, academic_year, grade, section')
+    .eq('id', batchId)
+    .single();
+
+  const semester    = batchMeta?.semester     ?? 'Result';
+  const year        = batchMeta?.academic_year ?? '';
+  const title       = 'New Result Published';
+  const body        = `Your ${semester}${year ? ` (${year})` : ''} result is now available.`;
+
+  // Bulk-insert one notification per published student
+  const rows = targetRows.map((r) => ({
+    recipient_type:       'student',
+    recipient_student_id: r.student_ref_id,
+    recipient_school_id:  null,
+    title,
+    body,
+    notification_type:    'result_published',
+    link_type:            'result_batch',
+    link_id:              batchId,
+    is_read:              false,
+  }));
+
+  const { error: insertErr } = await (service as any)
+    .from('notifications')
+    .insert(rows);
+
+  if (insertErr) {
+    throw new Error(`notifications insert: ${insertErr.message}`);
+  }
 }

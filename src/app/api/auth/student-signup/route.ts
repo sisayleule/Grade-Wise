@@ -4,23 +4,23 @@
  * Self-service student registration. No auth required (public route).
  *
  * Flow:
- *   1. Validate inputs
+ *   1. Validate inputs (including grade + section — required since Phase 4 fix)
  *   2. Look up school by school_code → error if not found or not approved
- *   3. Check for an existing students row with the same (school_id, student_code):
- *      a. If it exists AND auth_user_id is already set → "already registered" error
- *      b. If it exists but unclaimed → claim it (update with auth_user_id etc.)
- *      c. If it doesn't exist → create a new students row then claim it
+ *   3. Look up students row by (school_id, student_code):
+ *      a. Not found at all → error: "Student ID not found"
+ *         (Students must exist in the DB — uploaded by teacher — before signing up.
+ *          This prevents phantom registrations for nonexistent student codes.)
+ *      b. Found but grade/section don't match exactly → specific mismatch error
+ *      c. Found, grade/section match, already claimed (auth_user_id set) → 409
+ *      d. Found, grade/section match, unclaimed → proceed
  *   4. Create the Supabase auth user (service-role admin API)
  *   5. Write auth_user_id + email + portal_status='pending' to the students row
  *
- * A student does NOT need the teacher to have uploaded results first.
- * The student_code they enter is any ID they know (from their result sheet,
- * school register, or assigned by the teacher). If a teacher later uploads
- * a result sheet containing that same student_code, the batch-save upsert
- * will find this students row and update grade/section/year — linking the
- * portal account to the results automatically.
- *
- * Returns 201 on success.
+ * Grade + Section verification (step 3b) is the key fix:
+ *   A student must prove they belong to the correct class, not just that they
+ *   know a school code and any student ID in that school.  The error message
+ *   is intentionally specific so a legitimate student can correct their input,
+ *   but does not reveal whose record was found (no name/email leakage).
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from 'lib/supabase/service';
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   if (!body) return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
 
-  const { full_name, student_code, school_code, email, password } = body;
+  const { full_name, student_code, school_code, grade, section, email, password, parent_name, parent_phone } = body;
 
   // ── 1. Validate inputs ─────────────────────────────────────────────────────
   if (!full_name?.trim())
@@ -38,15 +38,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Student ID is required.' }, { status: 400 });
   if (!school_code?.trim())
     return NextResponse.json({ error: 'School code is required.' }, { status: 400 });
+  if (!grade?.trim())
+    return NextResponse.json({ error: 'Grade is required.' }, { status: 400 });
+  if (!section?.trim())
+    return NextResponse.json({ error: 'Section is required.' }, { status: 400 });
   if (!email?.trim())
     return NextResponse.json({ error: 'Email is required.' }, { status: 400 });
   if (!password || password.length < 8)
     return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 });
 
-  const emailNorm   = email.trim().toLowerCase();
-  const codeNorm    = student_code.trim();
-  const nameNorm    = full_name.trim();
-  const schoolNorm  = school_code.trim().toUpperCase();
+  const emailNorm  = email.trim().toLowerCase();
+  const codeNorm   = student_code.trim();
+  const nameNorm   = full_name.trim();
+  const schoolNorm = school_code.trim().toUpperCase();
+  const gradeNorm  = grade.trim();
+  const sectNorm   = section.trim();
 
   const service = createServiceClient();
 
@@ -71,16 +77,60 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // ── 3. Check existing students row ────────────────────────────────────────
+  // ── 3. Look up existing students row ──────────────────────────────────────
+  // We select grade and section so we can verify the exact class match.
   const { data: existing } = await (service as any)
     .from('students')
-    .select('id, auth_user_id')
+    .select('id, auth_user_id, grade, section')
     .eq('school_id', school.id)
     .eq('student_code', codeNorm)
-    .maybeSingle() as { data: { id: string; auth_user_id: string | null } | null };
+    .maybeSingle() as {
+      data: {
+        id: string;
+        auth_user_id: string | null;
+        grade: string;
+        section: string;
+      } | null;
+    };
 
-  if (existing?.auth_user_id) {
-    // Already claimed by another account
+  // 3a. Student ID not found at all in this school
+  if (!existing) {
+    return NextResponse.json(
+      {
+        error:
+          'Student ID not found in this school. ' +
+          'Check your Student ID and School Code, or ask your teacher to upload your results first.',
+      },
+      { status: 404 }
+    );
+  }
+
+  // 3b. Student ID found but grade or section doesn't match.
+  //
+  // Grade tolerance: the DB stores "Grade 9" (the full selector string from the
+  // teacher app) but a student naturally types "9". Normalise both sides by
+  // stripping the leading "Grade " / "grade " prefix before comparing so that
+  // "Grade 9" == "9" == "grade 9" all pass. Section is compared as-is
+  // (case-insensitive) since it is always a short value like "C" or "Gold".
+  const normaliseGrade = (g: string) =>
+    g.trim().toLowerCase().replace(/^grade\s+/i, '').trim();
+
+  const gradeMatch   = normaliseGrade(existing.grade) === normaliseGrade(gradeNorm);
+  const sectionMatch = existing.section.trim().toLowerCase() === sectNorm.toLowerCase();
+
+  if (!gradeMatch || !sectionMatch) {
+    return NextResponse.json(
+      {
+        error:
+          "Student ID found, but Grade/Section doesn't match our records — " +
+          'check with your teacher.',
+      },
+      { status: 422 }
+    );
+  }
+
+  // 3c. Already claimed
+  if (existing.auth_user_id) {
     return NextResponse.json(
       {
         error:
@@ -114,49 +164,31 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to create account.' }, { status: 500 });
   }
 
-  // ── 5a. If students row already exists → update it ────────────────────────
-  if (existing) {
-    const { error: updateErr } = await (service as any)
-      .from('students')
-      .update({
-        auth_user_id:  authUserId,
-        email:         emailNorm,
-        full_name:     nameNorm,
-        portal_status: 'pending',
-      })
-      .eq('id', existing.id);
+  // ── 5. Claim the existing students row ────────────────────────────────────
+  // Always updates the existing row — we no longer insert phantom rows because
+  // step 3a already rejects sign-ups for nonexistent student codes.
+  // Grade/section are intentionally NOT overwritten — they come from the
+  // teacher's uploaded data and must not be overridden by user input.
+  const { error: updateErr } = await (service as any)
+    .from('students')
+    .update({
+      auth_user_id:  authUserId,
+      email:         emailNorm,
+      full_name:     nameNorm,       // update name in case teacher had a placeholder
+      portal_status: 'pending',
+      // Parent contact — save if provided, leave existing value if not sent
+      ...(parent_name?.trim()  ? { parent_name:  parent_name.trim()  } : {}),
+      ...(parent_phone?.trim() ? { parent_phone: parent_phone.trim() } : {}),
+    })
+    .eq('id', existing.id);
 
-    if (updateErr) {
-      await service.auth.admin.deleteUser(authUserId);
-      console.error('[student-signup] update:', updateErr.message);
-      return NextResponse.json({ error: 'Failed to link account. Please try again.' }, { status: 500 });
-    }
-  } else {
-    // ── 5b. No row yet → insert a new canonical student record ──────────────
-    const { error: insertErr } = await (service as any)
-      .from('students')
-      .insert({
-        school_id:     school.id,
-        student_code:  codeNorm,
-        full_name:     nameNorm,
-        email:         emailNorm,
-        auth_user_id:  authUserId,
-        portal_status: 'pending',
-        // grade/section/academic_year left blank until teacher uploads results
-        // containing this student_code — the batch-save upsert will fill them in
-      });
-
-    if (insertErr) {
-      // Roll back the auth user to keep data consistent
-      await service.auth.admin.deleteUser(authUserId);
-      console.error('[student-signup] insert error code:', insertErr.code);
-      console.error('[student-signup] insert error msg:', insertErr.message);
-      console.error('[student-signup] insert details:', insertErr.details);
-      return NextResponse.json(
-        { error: 'Failed to create student record. Please try again.', detail: insertErr.message },
-        { status: 500 }
-      );
-    }
+  if (updateErr) {
+    await service.auth.admin.deleteUser(authUserId);
+    console.error('[student-signup] update:', updateErr.message);
+    return NextResponse.json(
+      { error: 'Failed to link account. Please try again.' },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json(

@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
   let q = (service as any)
     .from('students')
-    .select('id, student_code, full_name, grade, section, academic_year, email, portal_status, created_at')
+    .select('id, student_code, full_name, grade, section, academic_year, email, portal_status, parent_name, parent_phone, created_at')
     .eq('school_id', teacherId)
     .order('created_at', { ascending: false });
 
